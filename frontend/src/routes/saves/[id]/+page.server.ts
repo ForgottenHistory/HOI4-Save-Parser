@@ -7,6 +7,20 @@ import { getCountryName, getPartyName, localize } from '$lib/server/localization
 
 const UPLOADS_DIR = path.resolve('uploads');
 
+export interface DivisionTemplate {
+	id: number;
+	name: string;
+	regiments: string[];
+	support: string[];
+}
+
+export interface Division {
+	id: number;
+	name?: string;
+	template_id: number;
+	location?: number;
+}
+
 export interface GameData {
 	metadata: {
 		player: string;
@@ -49,6 +63,8 @@ export interface GameData {
 			major?: boolean | null;
 			variables?: Record<string, number>;
 		};
+		division_templates?: DivisionTemplate[];
+		divisions?: Division[];
 	}>;
 }
 
@@ -99,6 +115,24 @@ export const load: PageServerLoad = async ({ params }) => {
 			name: localize(focus)
 		})) ?? [];
 
+		// Get division data
+		const divisionTemplates = playerCountry?.division_templates ?? [];
+		const divisions = playerCountry?.divisions ?? [];
+
+		// Create a map from template ID to template for easy lookup
+		const templateMap = new Map(divisionTemplates.map(t => [t.id, t]));
+
+		// Enrich divisions with template names
+		const enrichedDivisions = divisions.map(div => {
+			const template = templateMap.get(div.template_id);
+			return {
+				...div,
+				templateName: template?.name ?? 'Unknown Template',
+				regiments: template?.regiments ?? [],
+				support: template?.support ?? []
+			};
+		});
+
 		return {
 			saveId: params.id,
 			metadata: gameData.metadata,
@@ -107,7 +141,9 @@ export const load: PageServerLoad = async ({ params }) => {
 			partyInfo,
 			localizedIdeas,
 			localizedCurrentFocus,
-			localizedCompletedFocuses
+			localizedCompletedFocuses,
+			divisionTemplates,
+			divisions: enrichedDivisions
 		};
 	} catch (e) {
 		console.error('Failed to load save data:', e);

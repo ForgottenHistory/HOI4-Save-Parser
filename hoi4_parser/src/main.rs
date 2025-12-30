@@ -6,7 +6,7 @@ use hoi4save::{Hoi4File, PdsDate};
 use serde_json;
 
 mod enhanced_country;
-use enhanced_country::{EnhancedHoi4Save, DatabaseCharacter};
+use enhanced_country::{EnhancedHoi4Save, DatabaseCharacter, DivisionTemplate, Division};
 
 use std::collections::BTreeMap;
 use regex::Regex;
@@ -130,6 +130,174 @@ fn extract_character_names(save_content: &str) -> HashMap<i32, String> {
     character_names
 }
 
+fn extract_nested_block(content: &str, start_keyword: &str) -> Option<String> {
+    if let Some(block_start) = content.find(start_keyword) {
+        let after_keyword = block_start + start_keyword.len();
+        let mut brace_count = 1;
+        let mut block_end = after_keyword;
+
+        for (idx, ch) in content[after_keyword..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    block_end = after_keyword + idx;
+                    break;
+                }
+            }
+        }
+
+        Some(content[after_keyword..block_end].to_string())
+    } else {
+        None
+    }
+}
+
+fn extract_division_templates(save_content: &str) -> HashMap<String, Vec<DivisionTemplate>> {
+    let mut templates_by_country: HashMap<String, Vec<DivisionTemplate>> = HashMap::new();
+
+    // Pattern to find division_template blocks
+    let template_start = Regex::new(r"division_template=\{").unwrap();
+    let id_pattern = Regex::new(r#"id=\{\s*id=(\d+)\s+type=52\s*\}"#).unwrap();
+    let name_pattern = Regex::new(r#"name="([^"]+)""#).unwrap();
+    let country_pattern = Regex::new(r#"country="([A-Z]{3})""#).unwrap();
+    let unit_pattern = Regex::new(r#"(\w+)=\{\s*x=\d+\s+y=\d+\s*\}"#).unwrap();
+
+    for template_match in template_start.find_iter(save_content) {
+        let start_pos = template_match.start();
+
+        // Find the end of this template block by counting braces
+        let mut brace_count = 1;
+        let mut end_pos = template_match.end();
+
+        for (idx, ch) in save_content[template_match.end()..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    end_pos = template_match.end() + idx;
+                    break;
+                }
+            }
+        }
+
+        let template_content = &save_content[start_pos..end_pos];
+
+        // Extract template data
+        let id = id_pattern.captures(template_content)
+            .and_then(|c| c[1].parse::<i32>().ok())
+            .unwrap_or(0);
+
+        let name = name_pattern.captures(template_content)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+
+        let country = country_pattern.captures(template_content)
+            .map(|c| c[1].to_string());
+
+        if let Some(country_tag) = country {
+            if !name.is_empty() {
+                // Extract regiments using proper nested block parsing
+                let mut regiments = Vec::new();
+                let mut support = Vec::new();
+
+                if let Some(reg_content) = extract_nested_block(template_content, "regiments={") {
+                    for cap in unit_pattern.captures_iter(&reg_content) {
+                        regiments.push(cap[1].to_string());
+                    }
+                }
+
+                if let Some(sup_content) = extract_nested_block(template_content, "support={") {
+                    for cap in unit_pattern.captures_iter(&sup_content) {
+                        support.push(cap[1].to_string());
+                    }
+                }
+
+                let template = DivisionTemplate {
+                    id,
+                    name,
+                    regiments,
+                    support,
+                };
+
+                templates_by_country.entry(country_tag).or_default().push(template);
+            }
+        }
+    }
+
+    println!("Extracted division templates for {} countries", templates_by_country.len());
+    templates_by_country
+}
+
+fn extract_divisions(save_content: &str) -> HashMap<String, Vec<Division>> {
+    let mut divisions_by_country: HashMap<String, Vec<Division>> = HashMap::new();
+
+    // Find division blocks - they start with division={ and have a division_template_id
+    let division_start = Regex::new(r"division=\{").unwrap();
+    let id_pattern = Regex::new(r#"id=\{\s*id=(\d+)\s+type=\d+\s*\}"#).unwrap();
+    let template_id_pattern = Regex::new(r#"division_template_id=\{\s*id=(\d+)\s+type=\d+\s*\}"#).unwrap();
+    let country_pattern = Regex::new(r#"logical_country="([A-Z]{3})""#).unwrap();
+    let location_pattern = Regex::new(r"location=(\d+)").unwrap();
+    let name_order_pattern = Regex::new(r#"division_name=\{[^}]*name_order=(\d+)"#).unwrap();
+
+    for div_match in division_start.find_iter(save_content) {
+        let start_pos = div_match.start();
+
+        // Find the end of this division block by counting braces
+        let mut brace_count = 1;
+        let mut end_pos = div_match.end();
+
+        for (idx, ch) in save_content[div_match.end()..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    end_pos = div_match.end() + idx;
+                    break;
+                }
+            }
+        }
+
+        let div_content = &save_content[start_pos..end_pos];
+
+        // Only process if it has a division_template_id (actual combat division)
+        let template_id = match template_id_pattern.captures(div_content) {
+            Some(cap) => cap[1].parse::<i32>().unwrap_or(0),
+            None => continue, // Skip if not a proper division
+        };
+
+        let id = id_pattern.captures(div_content)
+            .and_then(|c| c[1].parse::<i32>().ok())
+            .unwrap_or(0);
+
+        let country = country_pattern.captures(div_content)
+            .map(|c| c[1].to_string());
+
+        let location = location_pattern.captures(div_content)
+            .and_then(|c| c[1].parse::<i32>().ok());
+
+        let name_order = name_order_pattern.captures(div_content)
+            .and_then(|c| c[1].parse::<i32>().ok());
+
+        if let Some(country_tag) = country {
+            let division = Division {
+                id,
+                name: name_order.map(|n| format!("#{}", n)),
+                template_id,
+                location,
+            };
+
+            divisions_by_country.entry(country_tag).or_default().push(division);
+        }
+    }
+
+    println!("Extracted divisions for {} countries", divisions_by_country.len());
+    divisions_by_country
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     
@@ -162,7 +330,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Extract character names
     println!("Extracting character names...");
     let character_names = extract_character_names(&save_content);
-    
+
+    // Extract division templates and divisions
+    println!("Extracting division templates...");
+    let division_templates = extract_division_templates(&save_content);
+
+    println!("Extracting divisions...");
+    let divisions = extract_divisions(&save_content);
+
     let save_file = Hoi4File::from_slice(&data)?;
     let resolver = HashMap::<u16, &str>::new();
     println!("Attempting to parse save file...");
@@ -236,9 +411,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             
+            let tag_str = tag.as_str();
+
+            // Get division templates for this country
+            let templates = division_templates.get(tag_str).cloned().unwrap_or_default();
+
+            // Get divisions for this country
+            let country_divisions = divisions.get(tag_str).cloned().unwrap_or_default();
+
             serde_json::json!({
-                "tag": tag.as_str(),
-                "data": country_data
+                "tag": tag_str,
+                "data": country_data,
+                "division_templates": templates,
+                "divisions": country_divisions
             })
         }).collect::<Vec<_>>()
     });

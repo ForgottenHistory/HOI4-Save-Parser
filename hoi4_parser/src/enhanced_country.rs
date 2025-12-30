@@ -117,3 +117,19 @@ pub struct Character {
     #[serde(default)]
     pub name: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DivisionTemplate {
+    pub id: i32,
+    pub name: String,
+    pub regiments: Vec<String>,
+    pub support: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Division {
+    pub id: i32,
+    pub name: Option<String>,
+    pub template_id: i32,
+    pub location: Option<i32>,
+}
