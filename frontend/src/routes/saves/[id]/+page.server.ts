@@ -3,6 +3,7 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import type { PageServerLoad } from './$types';
+import { getCountryName, getPartyName, localize } from '$lib/server/localization';
 
 const UPLOADS_DIR = path.resolve('uploads');
 
@@ -23,7 +24,9 @@ export interface GameData {
 				ruling_party: string;
 				political_power: number;
 				parties: Record<string, {
-					popularity: number;
+					popularity?: number;
+					name?: string;
+					long_name?: string;
 					country_leader?: Array<{
 						character: {
 							id: number;
@@ -32,7 +35,7 @@ export interface GameData {
 						};
 						ideology: string;
 					}>;
-				}>;
+				} | null>;
 				ideas: string[];
 				elections_allowed: boolean;
 				last_election: string;
@@ -64,10 +67,47 @@ export const load: PageServerLoad = async ({ params }) => {
 		// Find player country
 		const playerCountry = gameData.countries.find(c => c.tag === gameData.metadata.player);
 
+		// Get localized country name and ruling party
+		const rulingParty = playerCountry?.data.politics?.ruling_party;
+		const countryName = getCountryName(gameData.metadata.player, rulingParty ?? undefined);
+
+		// Get party name from save data first, then fallback to localization
+		const rulingPartyData = rulingParty && playerCountry?.data.politics?.parties
+			? playerCountry.data.politics.parties[rulingParty]
+			: null;
+		const partyNameFromSave = rulingPartyData?.long_name ?? rulingPartyData?.name;
+
+		const partyInfo = rulingParty
+			? getPartyName(gameData.metadata.player, rulingParty, partyNameFromSave ?? undefined)
+			: { party: 'Unknown', ideologyName: 'Unknown' };
+
+		// Localize ideas
+		const localizedIdeas = playerCountry?.data.politics?.ideas?.map(idea => ({
+			key: idea,
+			name: localize(idea)
+		})) ?? [];
+
+		// Localize focuses
+		const currentFocus = playerCountry?.data.focus?.current;
+		const localizedCurrentFocus = currentFocus ? {
+			key: currentFocus,
+			name: localize(currentFocus)
+		} : null;
+
+		const localizedCompletedFocuses = playerCountry?.data.focus?.completed?.map(focus => ({
+			key: focus,
+			name: localize(focus)
+		})) ?? [];
+
 		return {
 			saveId: params.id,
 			metadata: gameData.metadata,
-			playerCountry
+			playerCountry,
+			countryName,
+			partyInfo,
+			localizedIdeas,
+			localizedCurrentFocus,
+			localizedCompletedFocuses
 		};
 	} catch (e) {
 		console.error('Failed to load save data:', e);

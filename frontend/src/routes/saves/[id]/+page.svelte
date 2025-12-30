@@ -62,7 +62,7 @@
 						{country.tag}
 					</div>
 					<div>
-						<h2 class="text-2xl font-bold">{country.tag}</h2>
+						<h2 class="text-2xl font-bold">{data.countryName}</h2>
 						<p class="text-gray-400">Led by {getLeaderName(country)}</p>
 					</div>
 				</div>
@@ -70,7 +70,8 @@
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
 					<div class="bg-gray-700 rounded-lg p-4">
 						<p class="text-gray-400 text-sm">Ruling Party</p>
-						<p class="text-lg font-semibold">{formatIdeology(politics.ruling_party)}</p>
+						<p class="text-lg font-semibold">{data.partyInfo.party}</p>
+						<p class="text-xs text-gray-400">{data.partyInfo.ideologyName}</p>
 					</div>
 					<div class="bg-gray-700 rounded-lg p-4">
 						<p class="text-gray-400 text-sm">Political Power</p>
@@ -112,14 +113,14 @@
 					</div>
 				</div>
 
-				{#if country.data.focus}
+				{#if data.localizedCurrentFocus || data.localizedCompletedFocuses.length > 0}
 					<div class="mb-6">
 						<h3 class="text-lg font-semibold mb-3">National Focus</h3>
-						{#if country.data.focus.current}
+						{#if data.localizedCurrentFocus}
 							<div class="bg-gray-700 rounded-lg p-4">
 								<p class="text-gray-400 text-sm">Currently Researching</p>
-								<p class="font-medium">{country.data.focus.current.replace(/_/g, ' ')}</p>
-								{#if country.data.focus.progress}
+								<p class="font-medium">{data.localizedCurrentFocus.name}</p>
+								{#if country.data.focus?.progress}
 									<div class="mt-2">
 										<div class="h-2 bg-gray-600 rounded-full overflow-hidden">
 											<div
@@ -135,15 +136,15 @@
 							<p class="text-gray-400">No focus in progress</p>
 						{/if}
 
-						{#if country.data.focus.completed && country.data.focus.completed.length > 0}
+						{#if data.localizedCompletedFocuses.length > 0}
 							<div class="mt-4">
-								<p class="text-gray-400 text-sm mb-2">Completed Focuses ({country.data.focus.completed.length})</p>
+								<p class="text-gray-400 text-sm mb-2">Completed Focuses ({data.localizedCompletedFocuses.length})</p>
 								<div class="flex flex-wrap gap-2">
-									{#each country.data.focus.completed.slice(0, 10) as focus}
-										<span class="px-2 py-1 bg-gray-700 rounded text-sm">{focus.replace(/_/g, ' ')}</span>
+									{#each data.localizedCompletedFocuses.slice(0, 10) as focus}
+										<span class="px-2 py-1 bg-gray-700 rounded text-sm">{focus.name}</span>
 									{/each}
-									{#if country.data.focus.completed.length > 10}
-										<span class="px-2 py-1 bg-gray-600 rounded text-sm">+{country.data.focus.completed.length - 10} more</span>
+									{#if data.localizedCompletedFocuses.length > 10}
+										<span class="px-2 py-1 bg-gray-600 rounded text-sm">+{data.localizedCompletedFocuses.length - 10} more</span>
 									{/if}
 								</div>
 							</div>
@@ -151,12 +152,12 @@
 					</div>
 				{/if}
 
-				{#if politics.ideas && politics.ideas.length > 0}
+				{#if data.localizedIdeas.length > 0}
 					<div>
 						<h3 class="text-lg font-semibold mb-3">National Ideas</h3>
 						<div class="flex flex-wrap gap-2">
-							{#each politics.ideas as idea}
-								<span class="px-2 py-1 bg-gray-700 rounded text-sm">{idea.replace(/_/g, ' ')}</span>
+							{#each data.localizedIdeas as idea}
+								<span class="px-2 py-1 bg-gray-700 rounded text-sm">{idea.name}</span>
 							{/each}
 						</div>
 					</div>

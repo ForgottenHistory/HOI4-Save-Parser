@@ -85,22 +85,17 @@ pub struct Politics {
     pub elections_allowed: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
-pub struct Parties {
-    #[serde(default)]
-    pub democratic: Option<Party>,
-    #[serde(default)]
-    pub communism: Option<Party>,
-    #[serde(default)]
-    pub fascism: Option<Party>,
-    #[serde(default)]
-    pub neutrality: Option<Party>,
-}
+// Use HashMap to support mod ideologies beyond the base 4
+pub type Parties = HashMap<String, Option<Party>>;
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
 pub struct Party {
     #[serde(default)]
     pub popularity: Option<f64>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub long_name: Option<String>,
     #[serde(default)]
     pub country_leader: Option<Vec<CountryLeader>>,
 }
