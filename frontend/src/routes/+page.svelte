@@ -1,8 +1,20 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
+
 	let isDragging = $state(false);
 	let selectedFile = $state<File | null>(null);
 	let isUploading = $state(false);
 	let uploadResult = $state<{ success: boolean; message: string } | null>(null);
+	let fileInput = $state<HTMLInputElement | null>(null);
+
+	// Sync selectedFile to the form's file input when both are available
+	$effect(() => {
+		if (fileInput && selectedFile) {
+			const dt = new DataTransfer();
+			dt.items.add(selectedFile);
+			fileInput.files = dt.files;
+		}
+	});
 
 	function handleDragOver(e: DragEvent) {
 		e.preventDefault();
@@ -33,36 +45,6 @@
 		if (file) {
 			selectedFile = file;
 			uploadResult = null;
-		}
-	}
-
-	async function uploadFile() {
-		if (!selectedFile) return;
-
-		isUploading = true;
-		uploadResult = null;
-
-		try {
-			const formData = new FormData();
-			formData.append('savefile', selectedFile);
-
-			const response = await fetch('?/upload', {
-				method: 'POST',
-				body: formData
-			});
-
-			const result = await response.json();
-
-			if (result.type === 'success') {
-				uploadResult = { success: true, message: 'Save file uploaded successfully!' };
-				selectedFile = null;
-			} else {
-				uploadResult = { success: false, message: result.data?.message || 'Upload failed' };
-			}
-		} catch (error) {
-			uploadResult = { success: false, message: 'Failed to upload file' };
-		} finally {
-			isUploading = false;
 		}
 	}
 
@@ -115,7 +97,24 @@
 		</div>
 
 		{#if selectedFile}
-			<div class="mt-6 p-4 bg-gray-800 rounded-lg">
+			<form
+				method="POST"
+				action="?/upload"
+				enctype="multipart/form-data"
+				use:enhance={() => {
+					isUploading = true;
+					uploadResult = null;
+					return async ({ result }) => {
+						isUploading = false;
+						if (result.type === 'redirect') {
+							window.location.href = result.location;
+						} else if (result.type === 'failure') {
+							uploadResult = { success: false, message: result.data?.message || 'Upload failed' };
+						}
+					};
+				}}
+				class="mt-6 p-4 bg-gray-800 rounded-lg"
+			>
 				<div class="flex items-center justify-between">
 					<div class="flex items-center gap-3">
 						<svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -127,14 +126,21 @@
 						</div>
 					</div>
 					<button
-						onclick={uploadFile}
+						type="submit"
 						disabled={isUploading}
 						class="px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg font-medium transition-colors"
 					>
-						{isUploading ? 'Uploading...' : 'Upload'}
+						{isUploading ? 'Processing...' : 'Analyze'}
 					</button>
 				</div>
-			</div>
+				<input
+					bind:this={fileInput}
+					type="file"
+					name="savefile"
+					accept=".hoi4"
+					class="hidden"
+				/>
+			</form>
 		{/if}
 
 		{#if uploadResult}

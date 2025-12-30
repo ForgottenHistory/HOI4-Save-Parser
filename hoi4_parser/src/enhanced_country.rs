@@ -49,8 +49,8 @@ pub struct EnhancedCountry {
     pub stability: f64,
     #[serde(default)]
     pub war_support: f64,
-    #[serde(default)]
-    pub variables: HashMap<String, f64>,
+    #[serde(default, skip_deserializing)]
+    pub variables: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub politics: Option<Politics>,
     #[serde(default)]
