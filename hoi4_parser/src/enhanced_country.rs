@@ -133,3 +133,47 @@ pub struct Division {
     pub template_id: i32,
     pub location: Option<i32>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Faction {
+    pub name: String,
+    pub ideology: String,
+    pub members: Vec<String>,
+    pub leader: Option<String>,
+    pub resources: FactionResources,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct FactionResources {
+    pub oil: i32,
+    pub aluminium: i32,
+    pub tungsten: i32,
+    pub steel: i32,
+    pub chromium: i32,
+    pub coal: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiplomaticRelation {
+    pub country: String,
+    pub attitude: String,
+    pub opinion: i32,
+    pub is_puppet: bool,
+    pub is_master: bool,
+    pub autonomy_level: Option<String>,
+    pub has_market_access: bool,
+    pub has_equipment_contract: bool,
+    pub truce_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct WarStatistics {
+    pub puppeted_countries: i32,
+    pub provinces_gained: i32,
+    pub provinces_lost: i32,
+    pub defensive_victories: i32,
+    pub own_casualties: i64,
+    pub enemy_casualties: i64,
+    pub conquered_percentage: i32,
+    pub hours_at_war: i64,
+}

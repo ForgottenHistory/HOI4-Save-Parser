@@ -207,6 +207,103 @@
 				</div>
 			{/if}
 
+		{#if data.faction || data.warStatistics}
+			<div class="bg-gray-800 rounded-lg p-6 mb-6">
+				<h3 class="text-lg font-semibold mb-4">Diplomacy</h3>
+
+				{#if data.faction}
+					<div class="mb-6">
+						<div class="bg-gray-700 rounded-lg p-4 mb-4">
+							<div class="flex justify-between items-start mb-3">
+								<div>
+									<h4 class="font-medium text-lg">{data.faction.name}</h4>
+									<p class="text-sm text-gray-400 capitalize">{data.faction.ideology} Faction</p>
+								</div>
+								<span class="text-sm text-gray-400">{data.faction.members.length} members</span>
+							</div>
+
+							<div class="flex flex-wrap gap-2 mb-4">
+								{#each data.faction.members as member}
+									<span class="px-2 py-1 rounded text-sm {member.tag === data.metadata.player ? 'bg-blue-600' : 'bg-gray-600'}">
+										{member.name}
+										{#if member.tag === data.faction.leader}
+											<span class="text-yellow-400 ml-1">★</span>
+										{/if}
+									</span>
+								{/each}
+							</div>
+
+							{#if data.faction.resources}
+								<div class="border-t border-gray-600 pt-3">
+									<p class="text-xs text-gray-400 mb-2">Pooled Resources</p>
+									<div class="flex flex-wrap gap-3 text-sm">
+										{#if data.faction.resources.steel > 0}
+											<span class="text-gray-300">Steel: {data.faction.resources.steel}</span>
+										{/if}
+										{#if data.faction.resources.aluminium > 0}
+											<span class="text-gray-300">Aluminium: {data.faction.resources.aluminium}</span>
+										{/if}
+										{#if data.faction.resources.tungsten > 0}
+											<span class="text-gray-300">Tungsten: {data.faction.resources.tungsten}</span>
+										{/if}
+										{#if data.faction.resources.chromium > 0}
+											<span class="text-gray-300">Chromium: {data.faction.resources.chromium}</span>
+										{/if}
+										{#if data.faction.resources.oil > 0}
+											<span class="text-gray-300">Oil: {data.faction.resources.oil}</span>
+										{/if}
+										{#if data.faction.resources.coal > 0}
+											<span class="text-gray-300">Coal: {data.faction.resources.coal}</span>
+										{/if}
+									</div>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
+
+				{#if data.warStatistics}
+					<div>
+						<h4 class="text-md font-medium text-gray-300 mb-3">War Statistics</h4>
+						<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Own Casualties</p>
+								<p class="text-lg font-semibold text-red-400">{data.warStatistics.own_casualties.toLocaleString()}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Enemy Casualties</p>
+								<p class="text-lg font-semibold text-green-400">{data.warStatistics.enemy_casualties.toLocaleString()}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Provinces Gained</p>
+								<p class="text-lg font-semibold">{data.warStatistics.provinces_gained}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Provinces Lost</p>
+								<p class="text-lg font-semibold">{data.warStatistics.provinces_lost}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Defensive Victories</p>
+								<p class="text-lg font-semibold">{data.warStatistics.defensive_victories}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Countries Puppeted</p>
+								<p class="text-lg font-semibold">{data.warStatistics.puppeted_countries}</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">World Conquered</p>
+								<p class="text-lg font-semibold">{data.warStatistics.conquered_percentage}%</p>
+							</div>
+							<div class="bg-gray-700 rounded-lg p-3">
+								<p class="text-gray-400 text-xs">Hours at War</p>
+								<p class="text-lg font-semibold">{data.warStatistics.hours_at_war.toLocaleString()}</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
+			{/if}
+
 			<div class="bg-gray-800 rounded-lg p-6">
 				<h3 class="text-lg font-semibold mb-3">Game Info</h3>
 				<div class="grid grid-cols-2 gap-4 text-sm">

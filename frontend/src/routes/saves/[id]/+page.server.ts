@@ -21,12 +21,43 @@ export interface Division {
 	location?: number;
 }
 
+export interface Faction {
+	name: string;
+	ideology: string;
+	members: string[];
+	leader?: string;
+	resources: {
+		oil: number;
+		aluminium: number;
+		tungsten: number;
+		steel: number;
+		chromium: number;
+		coal: number;
+	};
+}
+
+export interface WarStatistics {
+	puppeted_countries: number;
+	provinces_gained: number;
+	provinces_lost: number;
+	defensive_victories: number;
+	own_casualties: number;
+	enemy_casualties: number;
+	conquered_percentage: number;
+	hours_at_war: number;
+}
+
 export interface GameData {
 	metadata: {
 		player: string;
 		date: string;
 		total_countries: number;
 		active_countries: number;
+	};
+	diplomacy: {
+		faction: Faction | null;
+		relations: unknown[];
+		war_statistics: WarStatistics;
 	};
 	events: string[];
 	countries: Array<{
@@ -133,6 +164,16 @@ export const load: PageServerLoad = async ({ params }) => {
 			};
 		});
 
+		// Localize faction members
+		const faction = gameData.diplomacy?.faction;
+		const localizedFaction = faction ? {
+			...faction,
+			members: faction.members.map(tag => ({
+				tag,
+				name: getCountryName(tag)
+			}))
+		} : null;
+
 		return {
 			saveId: params.id,
 			metadata: gameData.metadata,
@@ -143,7 +184,9 @@ export const load: PageServerLoad = async ({ params }) => {
 			localizedCurrentFocus,
 			localizedCompletedFocuses,
 			divisionTemplates,
-			divisions: enrichedDivisions
+			divisions: enrichedDivisions,
+			faction: localizedFaction,
+			warStatistics: gameData.diplomacy?.war_statistics ?? null
 		};
 	} catch (e) {
 		console.error('Failed to load save data:', e);

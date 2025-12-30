@@ -6,7 +6,7 @@ use hoi4save::{Hoi4File, PdsDate};
 use serde_json;
 
 mod enhanced_country;
-use enhanced_country::{EnhancedHoi4Save, DatabaseCharacter, DivisionTemplate, Division};
+use enhanced_country::{EnhancedHoi4Save, DivisionTemplate, Division, Faction, FactionResources, DiplomaticRelation, WarStatistics};
 
 use std::collections::BTreeMap;
 use regex::Regex;
@@ -298,6 +298,275 @@ fn extract_divisions(save_content: &str) -> HashMap<String, Vec<Division>> {
     divisions_by_country
 }
 
+fn extract_factions(save_content: &str) -> Vec<Faction> {
+    let mut factions = Vec::new();
+
+    let faction_start = Regex::new(r"faction=\{").unwrap();
+    let name_pattern = Regex::new(r#"name="([^"]+)""#).unwrap();
+    let ideology_pattern = Regex::new(r#"ideology=(\w+)"#).unwrap();
+    let member_pattern = Regex::new(r#""([A-Z]{3})""#).unwrap();
+
+    for faction_match in faction_start.find_iter(save_content) {
+        let start_pos = faction_match.start();
+
+        // Find the end of this faction block
+        let mut brace_count = 1;
+        let mut end_pos = faction_match.end();
+
+        for (idx, ch) in save_content[faction_match.end()..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    end_pos = faction_match.end() + idx;
+                    break;
+                }
+            }
+        }
+
+        let faction_content = &save_content[start_pos..end_pos];
+
+        // Must have a name to be a real faction
+        let name = match name_pattern.captures(faction_content) {
+            Some(cap) => cap[1].to_string(),
+            None => continue,
+        };
+
+        let ideology = ideology_pattern.captures(faction_content)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Extract members
+        let mut members = Vec::new();
+        if let Some(members_block) = extract_nested_block(faction_content, "members={") {
+            for cap in member_pattern.captures_iter(&members_block) {
+                members.push(cap[1].to_string());
+            }
+        }
+
+        // Extract resources
+        let mut resources = FactionResources::default();
+        if let Some(extracted_block) = extract_nested_block(faction_content, "extracted={") {
+            if let Some(cap) = Regex::new(r"oil=(\d+)").unwrap().captures(&extracted_block) {
+                resources.oil = cap[1].parse().unwrap_or(0);
+            }
+            if let Some(cap) = Regex::new(r"aluminium=(\d+)").unwrap().captures(&extracted_block) {
+                resources.aluminium = cap[1].parse().unwrap_or(0);
+            }
+            if let Some(cap) = Regex::new(r"tungsten=(\d+)").unwrap().captures(&extracted_block) {
+                resources.tungsten = cap[1].parse().unwrap_or(0);
+            }
+            if let Some(cap) = Regex::new(r"steel=(\d+)").unwrap().captures(&extracted_block) {
+                resources.steel = cap[1].parse().unwrap_or(0);
+            }
+            if let Some(cap) = Regex::new(r"chromium=(\d+)").unwrap().captures(&extracted_block) {
+                resources.chromium = cap[1].parse().unwrap_or(0);
+            }
+            if let Some(cap) = Regex::new(r"coal=(\d+)").unwrap().captures(&extracted_block) {
+                resources.coal = cap[1].parse().unwrap_or(0);
+            }
+        }
+
+        // First member is typically the leader
+        let leader = members.first().cloned();
+
+        if !members.is_empty() {
+            factions.push(Faction {
+                name,
+                ideology,
+                members,
+                leader,
+                resources,
+            });
+        }
+    }
+
+    println!("Extracted {} factions", factions.len());
+    factions
+}
+
+fn find_player_faction(factions: &[Faction], player_tag: &str) -> Option<Faction> {
+    factions.iter()
+        .find(|f| f.members.contains(&player_tag.to_string()))
+        .cloned()
+}
+
+fn extract_relations_for_country(save_content: &str, country_tag: &str) -> Vec<DiplomaticRelation> {
+    let mut relations = Vec::new();
+
+    // Find the country's diplomacy section within the countries block
+    // Pattern: look for TAG={ followed by diplomacy data
+    let country_section_pattern = format!(r"(?m)^\t{}=\{{\n\t\tinstances_counter=", country_tag);
+    let country_start_regex = Regex::new(&country_section_pattern).unwrap();
+
+    if let Some(country_match) = country_start_regex.find(save_content) {
+        let start_pos = country_match.start();
+
+        // Find the end of this country's block
+        let search_start = country_match.end();
+        let mut brace_count = 1;
+        let mut country_end = search_start;
+
+        for (idx, ch) in save_content[search_start..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    country_end = search_start + idx;
+                    break;
+                }
+            }
+        }
+
+        let country_section = &save_content[start_pos..country_end];
+
+        // Find the diplomacy block within this country, then active_relations within that
+        if let Some(diplomacy_block) = extract_nested_block(country_section, "diplomacy={") {
+            // Relations are inside active_relations={}
+            let relations_block = extract_nested_block(&diplomacy_block, "active_relations={")
+                .unwrap_or(diplomacy_block);
+
+            // Now parse each country relation
+            let relation_pattern = Regex::new(r"([A-Z]{3})=\{").unwrap();
+            let attitude_pattern = Regex::new(r#"attitude="([^"]+)""#).unwrap();
+            let opinion_pattern = Regex::new(r"cached_sum=(-?\d+)").unwrap();
+            let puppet_pattern = Regex::new(r#"puppet=\{[^}]*autonomy_state="([^"]+)""#).unwrap();
+            let market_pattern = Regex::new(r"market_access_rights=\{").unwrap();
+            let equipment_pattern = Regex::new(r"equipment_purchase_contract_relation=\{").unwrap();
+            let truce_pattern = Regex::new(r#"truce_until="([^"]+)""#).unwrap();
+
+            for relation_match in relation_pattern.find_iter(&relations_block) {
+                let rel_start = relation_match.start();
+                let other_country = &relations_block[rel_start..rel_start + 3];
+
+                // Find end of this relation block
+                let block_start = relation_match.end();
+                let mut brace_count = 1;
+                let mut rel_end = block_start;
+
+                for (idx, ch) in relations_block[block_start..].char_indices() {
+                    if ch == '{' {
+                        brace_count += 1;
+                    } else if ch == '}' {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            rel_end = block_start + idx;
+                            break;
+                        }
+                    }
+                }
+
+                let rel_content = &relations_block[rel_start..rel_end];
+
+                let attitude = attitude_pattern.captures(rel_content)
+                    .map(|c| c[1].to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                // Skip if no meaningful relation data
+                if attitude == "unknown" && !rel_content.contains("puppet=") {
+                    continue;
+                }
+
+                let opinion = opinion_pattern.captures(rel_content)
+                    .and_then(|c| c[1].parse().ok())
+                    .unwrap_or(0);
+
+                // Check if this is a puppet relationship
+                let puppet_cap = puppet_pattern.captures(rel_content);
+                let is_puppet = puppet_cap.is_some();
+                let autonomy_level = puppet_cap.map(|c| c[1].to_string());
+
+                // Check if we are their master (first=us, second=them in puppet block)
+                let is_master = rel_content.contains(&format!("first=\"{}\"", country_tag))
+                    && rel_content.contains("puppet=");
+
+                let has_market_access = market_pattern.is_match(rel_content);
+                let has_equipment_contract = equipment_pattern.is_match(rel_content);
+
+                let truce_until = truce_pattern.captures(rel_content)
+                    .map(|c| c[1].to_string());
+
+                relations.push(DiplomaticRelation {
+                    country: other_country.to_string(),
+                    attitude,
+                    opinion,
+                    is_puppet,
+                    is_master,
+                    autonomy_level,
+                    has_market_access,
+                    has_equipment_contract,
+                    truce_until,
+                });
+            }
+        }
+    }
+
+    println!("Extracted {} relations for {}", relations.len(), country_tag);
+    relations
+}
+
+fn extract_war_statistics(save_content: &str, country_tag: &str) -> WarStatistics {
+    let mut stats = WarStatistics::default();
+
+    // Find the statistics section for this country
+    let stats_pattern = format!(r#"\{{ "{}"\s*\{{\s*data=\{{"#, country_tag);
+    let stats_regex = Regex::new(&stats_pattern).unwrap();
+
+    if let Some(stats_match) = stats_regex.find(save_content) {
+        let start_pos = stats_match.start();
+
+        // Find end of this stats block (it's quite large)
+        let search_start = stats_match.end();
+        let mut brace_count = 2; // We're already inside two braces
+        let mut stats_end = search_start;
+
+        for (idx, ch) in save_content[search_start..].char_indices() {
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    stats_end = search_start + idx;
+                    break;
+                }
+            }
+        }
+
+        let stats_content = &save_content[start_pos..stats_end];
+
+        // Extract various statistics
+        if let Some(cap) = Regex::new(r"puppeted_countries=(\d+)").unwrap().captures(stats_content) {
+            stats.puppeted_countries = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"provinces_gained=(\d+)").unwrap().captures(stats_content) {
+            stats.provinces_gained = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"provinces_lost=(\d+)").unwrap().captures(stats_content) {
+            stats.provinces_lost = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"defensive_victories=(\d+)").unwrap().captures(stats_content) {
+            stats.defensive_victories = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"own_casualties=(\d+)").unwrap().captures(stats_content) {
+            stats.own_casualties = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"enemy_casualties=(\d+)").unwrap().captures(stats_content) {
+            stats.enemy_casualties = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"conquered_percentage=(\d+)").unwrap().captures(stats_content) {
+            stats.conquered_percentage = cap[1].parse().unwrap_or(0);
+        }
+        if let Some(cap) = Regex::new(r"hours_at_war=(\d+)").unwrap().captures(stats_content) {
+            stats.hours_at_war = cap[1].parse().unwrap_or(0);
+        }
+    }
+
+    println!("Extracted war statistics for {}", country_tag);
+    stats
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     
@@ -338,6 +607,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Extracting divisions...");
     let divisions = extract_divisions(&save_content);
 
+    println!("Extracting factions...");
+    let factions = extract_factions(&save_content);
+
     let save_file = Hoi4File::from_slice(&data)?;
     let resolver = HashMap::<u16, &str>::new();
     println!("Attempting to parse save file...");
@@ -370,7 +642,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             has_activity && can_do_focuses
         })
         .collect();
-    
+
+    // Extract player-specific diplomacy data
+    println!("Extracting player diplomacy data...");
+    let player_faction = find_player_faction(&factions, &save.player);
+    let player_relations = extract_relations_for_country(&save_content, &save.player);
+    let player_war_stats = extract_war_statistics(&save_content, &save.player);
+
     // Create output structure
     let output_data = serde_json::json!({
         "metadata": {
@@ -378,6 +656,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "date": save.date.game_fmt().to_string(),
             "total_countries": save.countries.len(),
             "active_countries": active_countries.len()
+        },
+        "diplomacy": {
+            "faction": player_faction,
+            "relations": player_relations,
+            "war_statistics": player_war_stats
         },
         "events": clean_events,
         "countries": active_countries.iter().map(|(tag, country)| {
