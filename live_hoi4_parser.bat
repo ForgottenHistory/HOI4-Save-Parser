@@ -10,7 +10,7 @@ cd /d "%~dp0"
 
 :loop
 echo [%time%] Checking for latest autosave...
-python parse_latest_autosave.py
+python scripts\parse_latest_autosave.py
 
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to parse autosave

@@ -65,7 +65,7 @@ def find_latest_autosave(saves_dir):
 
 def parse_save_file(save_path, output_path):
     """Parse the save file using the Rust parser"""
-    parser_path = Path(__file__).parent / "hoi4_parser" / "target" / "release" / "hoi4_parser.exe"
+    parser_path = Path(__file__).parent.parent / "hoi4_parser" / "target" / "release" / "hoi4_parser.exe"
     
     if not parser_path.exists():
         print(f"[ERROR] Parser not found at: {parser_path}")
@@ -120,7 +120,7 @@ def main():
         return False
     
     # Set output path
-    output_path = Path(__file__).parent / "data" / "game_data.json"
+    output_path = Path(__file__).parent.parent / "data" / "game_data.json"
     output_path.parent.mkdir(exist_ok=True)
     
     print(f"[OUTPUT] Will save to: {output_path}")

@@ -4,114 +4,169 @@ HOI4 Localization Reader
 Reads localization files from Hearts of Iron IV installation
 """
 
+import os
 import re
+import sqlite3
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 class HOI4Localizer:
-    def __init__(self, hoi4_path: str = r"C:\Program Files (x86)\Steam\steamapps\common\Hearts of Iron IV"):
+    def __init__(self, hoi4_path: str = r"C:\Program Files (x86)\Steam\steamapps\common\Hearts of Iron IV",
+                 user_data_path: Optional[str] = None):
         self.hoi4_path = Path(hoi4_path)
-        self.project_locale_path = Path(__file__).parent.parent / "locale"
         self.game_localization_path = self.hoi4_path / "localisation" / "english"
+
+        # HOI4 user-data dir holds the launcher DB and resolved mod playsets.
+        # Env override wins, then explicit arg, then the default Documents location.
+        env_user = os.environ.get("HOI4_USER_DIR")
+        if env_user:
+            self.user_data_path = Path(env_user)
+        elif user_data_path:
+            self.user_data_path = Path(user_data_path)
+        else:
+            self.user_data_path = (
+                Path.home() / "Documents" / "Paradox Interactive" / "Hearts of Iron IV"
+            )
+
         self.translations: Dict[str, str] = {}
         self.loaded_files = set()
+        # Populated by load_all_files(): the enabled mods of the active playset,
+        # in game load order, as (display_name, localisation_dir) pairs.
+        self.active_mods: List[Tuple[str, Path]] = []
     
     def load_localization_file(self, filename: str) -> int:
-        """Load a specific localization file using regex parsing"""
+        """Load a single base-game localization file by name.
+
+        Kept for callers that load specific files. The full mod-aware merge lives
+        in load_all_files().
+        """
         if filename in self.loaded_files:
             return 0
-        
-        # Try project locale folder first
-        file_path = self.project_locale_path / filename
-        if not file_path.exists():
-            # Fallback to game localization folder
-            file_path = self.game_localization_path / filename
-        
+
+        file_path = self.game_localization_path / filename
         if not file_path.exists():
             print(f"Warning: Localization file not found: {filename}")
             return 0
-        
+
+        return self._load_file_path(file_path)
+
+    def _load_file_path(self, file_path: Path) -> int:
+        """Parse one .yml at an absolute path and merge its keys (last-writer-wins)."""
+        key = str(file_path)
+        if key in self.loaded_files:
+            return 0
+
         try:
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
-            
+
             count = 0
-            
             for line in content.split('\n'):
                 line = line.strip()
                 if not line or line.startswith('#') or line == 'l_english:':
                     continue
-                
-                # Try two patterns:
+
                 # Pattern 1: key:version "value" (e.g., GER:0 "Germany")
-                # Pattern 2: key: "value" (e.g., AUS_political_events.16.t: "Nazis in the Government")
-                
-                match = None
-                
-                # Pattern 1: with version number
-                pattern1 = r'^\s*([^:]+?):\d+\s+"([^"]*)"'
-                match = re.match(pattern1, line)
-                
+                match = re.match(r'^\s*([^:]+?):\d+\s+"([^"]*)"', line)
                 if not match:
-                    # Pattern 2: without version number  
-                    pattern2 = r'^\s*([^:]+?):\s+"([^"]*)"'
-                    match = re.match(pattern2, line)
-                
+                    # Pattern 2: key: "value" (e.g., AUS_political_events.16.t: "...")
+                    match = re.match(r'^\s*([^:]+?):\s+"([^"]*)"', line)
+
                 if match:
-                    key = match.group(1).strip()
-                    value = match.group(2).strip()
-                    
-                    if key and value:
-                        self.translations[key] = value
+                    k = match.group(1).strip()
+                    v = match.group(2).strip()
+                    if k and v:
+                        self.translations[k] = v
                         count += 1
-            
-            self.loaded_files.add(filename)
-            if count > 0:
-                print(f"Loaded {count} translations from {filename}")
+
+            self.loaded_files.add(key)
             return count
-            
+
         except Exception as e:
-            print(f"Error loading {filename}: {e}")
-            self.loaded_files.add(filename)
-        
+            print(f"Error loading {file_path}: {e}")
+            self.loaded_files.add(key)
+
         return 0
 
+    def resolve_active_playset_mods(self) -> List[Tuple[str, Path]]:
+        """Read the launcher DB for the active playset's enabled mods, in load order.
+
+        Returns a list of (display_name, localisation_dir) for each enabled mod
+        that ships a localisation folder, ordered by the playset's load position
+        (earlier = lower priority, overridden by later mods). Returns [] if the
+        DB is missing or unreadable so callers can fall back to base-game only.
+        """
+        db_path = self.user_data_path / "launcher-v2.sqlite"
+        if not db_path.exists():
+            print(f"Launcher DB not found at {db_path} - using base game locale only")
+            return []
+
+        mods: List[Tuple[str, Path]] = []
+        try:
+            # Read-only URI connection so we never disturb the launcher's DB.
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                active = conn.execute(
+                    "SELECT id, name FROM playsets WHERE isActive=1"
+                ).fetchone()
+                if not active:
+                    print("No active playset in launcher DB")
+                    return []
+                playset_id, playset_name = active
+                rows = conn.execute(
+                    """SELECT m.displayName, m.dirPath
+                       FROM playsets_mods pm JOIN mods m ON m.id = pm.modId
+                       WHERE pm.playsetId = ? AND pm.enabled = 1
+                       ORDER BY pm.position""",
+                    (playset_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            print(f"Could not read launcher DB: {e} - using base game locale only")
+            return []
+
+        for display_name, dir_path in rows:
+            if not dir_path:
+                continue
+            loc_dir = Path(dir_path) / "localisation"
+            if loc_dir.is_dir():
+                mods.append((display_name or Path(dir_path).name, loc_dir))
+
+        print(f"Active playset '{playset_name}': {len(mods)} enabled mods ship localisation")
+        return mods
+
+    def _load_dir_recursive(self, directory: Path) -> int:
+        """Merge every *_l_english.yml under a directory tree (last-writer-wins)."""
+        loaded = 0
+        for file_path in sorted(directory.rglob("*_l_english.yml")):
+            loaded += self._load_file_path(file_path)
+        return loaded
+
     def load_all_files(self):
-        """Load ALL localization files"""
+        """Load all localization in game-accurate order: base game -> enabled mods
+        (by playset load order). Later sources override earlier ones key-by-key,
+        matching how HOI4 resolves a mod stack."""
         total_loaded = 0
-        yml_files = []
-        
-        # Load from project locale folder first
-        if self.project_locale_path.exists():
-            project_files = list(self.project_locale_path.glob("*_l_english.yml"))
-            yml_files.extend(project_files)
-            print(f"Found {len(project_files)} localization files in project locale folder")
-        
-        # Load from game localization folder (only files not already loaded from project)
+
+        # 1. Base game (lowest priority).
         if self.game_localization_path.exists():
-            game_files = list(self.game_localization_path.glob("*_l_english.yml"))
-            # Filter out files that we already have from the project
-            project_filenames = {f.name for f in yml_files}
-            new_game_files = [f for f in game_files if f.name not in project_filenames]
-            yml_files.extend(new_game_files)
-            print(f"Found {len(new_game_files)} additional localization files in game folder")
-        
-        if not yml_files:
-            print("No localization files found in either project or game folders")
-            return 0
-        
-        print(f"Total localization files to process: {len(yml_files)}")
-        
-        for file_path in yml_files:
-            filename = file_path.name
-            loaded = self.load_localization_file(filename)
-            total_loaded += loaded
-            
-            # Show progress every 20 files
-            if len(self.loaded_files) % 20 == 0:
-                print(f"Processed {len(self.loaded_files)} files...")
-        
-        print(f"Total translations loaded: {total_loaded}")
+            n = self._load_dir_recursive(self.game_localization_path)
+            print(f"Base game: {n} translations")
+            total_loaded += n
+        else:
+            print(f"Base game localisation not found at {self.game_localization_path}")
+
+        # 2. Enabled mods, in load order — later positions override earlier.
+        self.active_mods = self.resolve_active_playset_mods()
+        for display_name, loc_dir in self.active_mods:
+            n = self._load_dir_recursive(loc_dir)
+            if n:
+                print(f"Mod '{display_name}': {n} translations")
+                total_loaded += n
+
+        print(f"Total translations in table: {len(self.translations)} "
+              f"({total_loaded} reads across all sources)")
         return total_loaded
     
     def get_localized_text(self, key: str) -> str:

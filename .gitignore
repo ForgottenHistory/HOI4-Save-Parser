@@ -1,26 +1,22 @@
+# Build artifacts
 /hoi4_parser/target/
-/hoi4_parser/countries/
-/hoi4_parser/game_data.json
 
+# Local config / secrets
 .env
-CLAUDE.md
-game_data.json
-
-*/ai_logs/*
-*/countries/*
-__pycache__/
-*/news_reports/*
-*/reports/*
-locale/*
-/streamer-tools/twitter-feed/ai_logs
 .claude/settings.local.json
-/ai_logs
-/streamer-tools/tts-assistant/ai_logs
-/hoi4_parser
-data/personas/tts-assistant/extracted_names.json
-/streamer-tools/breaking-news/ai_logs
-streamer-tools/breaking-news/current_headline.json
-streamer-tools/twitter-feed/config.json
-/saves
-data/test_output.json
-/data
+CLAUDE.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated parser output (rebuilt from saves/)
+/data/*.json
+
+# Saves are personal / large
+/saves/
+
+# Frontend
+/frontend/node_modules/
+/frontend/.svelte-kit/
+/frontend/build/
