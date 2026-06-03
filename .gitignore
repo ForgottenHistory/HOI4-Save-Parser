@@ -1,6 +1,3 @@
-# Build artifacts
-/hoi4_parser/target/
-
 # Local config / secrets
 .env
 .claude/settings.local.json
@@ -10,13 +7,5 @@ CLAUDE.md
 __pycache__/
 *.pyc
 
-# Generated parser output (rebuilt from saves/)
-/data/*.json
-
 # Saves are personal / large
 /saves/
-
-# Frontend
-/frontend/node_modules/
-/frontend/.svelte-kit/
-/frontend/build/

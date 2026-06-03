@@ -1,76 +1,90 @@
 # HOI4 Save Parser
 
-Tools for parsing Hearts of Iron IV save files and resolving localisation against a mod stack (Kaiserredux, sub-mods, etc.).
-
-## What it does
-
-- Parses plaintext `.hoi4` saves to structured JSON via a Rust extractor.
-- Resolves text keys to display strings using the **active playset's** localisation, read directly from the HOI4 launcher database — so mods like Kaiserredux render correctly instead of falling back to vanilla.
-- Standalone scripts on top of the above (e.g. list every completed national focus for a country).
+Pure-Python toolkit for extracting structured data from Hearts of Iron IV save files. Mod-stack-aware: works correctly with Kaiserredux and sub-mods by reading the HOI4 launcher's active playset and resolving map data + localisation in load order.
 
 Ironman (binary) saves are not supported — only plaintext.
 
 ## Layout
 
 ```
-hoi4_parser/          Rust save -> JSON extractor
 src/
   localization.py     KR-aware localizer (reads launcher-v2.sqlite for playset)
-  game_data_loader.py Loads parsed game_data.json
+  map_data.py         Mod-aware map data + province adjacency + neighbors
+  save_parsing.py     Country-block + party + character + idea extractors
+  save_locator.py     Find autosave path, detect changes
+  hoi4_session.py     Cached session for streaming-style polling
 scripts/
-  parse_latest_autosave.py   Find newest autosave, run the Rust parser
-  list_country_focuses.py    Dump completed focuses for a country tag
-  save_cleaner.py            Strip bloat sections from a save in-place
-data/                 Parsed JSON output (gitignored)
+  list_country_focuses.py     Completed national focuses
+  list_country_leader.py      Ruling party + current leader
+  list_country_parties.py     All political parties with popularity
+  list_country_ideas.py       Active national ideas
+  list_country_neighbors.py   Land-bordering countries
+  list_country_provinces.py   Owned states grouped by province
+  save_cleaner.py             Strip bloat sections from a save in-place
 saves/                Source .hoi4 files (gitignored)
-frontend/             SvelteKit viewer (separate stack)
+tests/                pytest suite (~130 tests, hermetic)
 ```
 
 ## Prerequisites
 
 - Hearts of Iron IV installed.
 - Python 3.10+.
-- Rust toolchain (only if rebuilding the parser).
+- Pillow + numpy (for the bitmap-adjacency scan used by `list_country_neighbors`).
 
 ## Usage
 
-### Parse the latest autosave
+### As a library (streaming / repeated queries)
 
-```bash
-python scripts/parse_latest_autosave.py
+```python
+from hoi4_session import HOI4Session
+import time
+
+session = HOI4Session()       # loads locale once (~1s)
+
+while True:
+    if session.refresh():     # ~0s when nothing changed
+        leader   = session.country_leader("CAN")
+        focuses  = session.country_focuses("CAN")
+        ideas    = session.country_ideas("CAN")
+        parties  = session.country_parties("CAN")
+        neighbors = session.country_neighbors("CAN")
+        # ... do something with the data
+    time.sleep(5)
 ```
 
-Writes `data/game_data.json`.
+The session caches the localizer at startup, the save text + global parses (characters, name hints) once per refresh, and per-tag query results until the next refresh. A no-change refresh is a single `stat()` call.
 
-### List a country's completed focuses
+### As one-off scripts
 
-```bash
-python scripts/list_country_focuses.py saves/<save>.hoi4 CAN
-```
-
-Loads the launcher's active playset, merges every enabled mod's localisation in load order, and prints each focus ID alongside its display name.
-
-### Live parsing loop
+Each `scripts/list_country_*.py` script takes a save path and a 3-letter country tag:
 
 ```bash
-live_hoi4_parser.bat
+python scripts/list_country_leader.py    saves/WRA_1936_07_19_01.hoi4 WRA
+python scripts/list_country_focuses.py   saves/CAN_1946_05_28_24.hoi4 CAN
+python scripts/list_country_parties.py   saves/WRA_1936_07_19_01.hoi4 WRA
+python scripts/list_country_ideas.py     saves/CAN_1946_05_28_24.hoi4 CAN
+python scripts/list_country_neighbors.py saves/WRA_1936_07_19_01.hoi4 WRA
+python scripts/list_country_provinces.py saves/CAN_1946_05_28_24.hoi4 CAN --verbose
 ```
 
-Re-runs `parse_latest_autosave.py` every 5 minutes.
+## How mod resolution works
 
-### Rebuild the Rust parser
+Both localisation and map data (state files, `provinces.bmp`, `definition.csv`) are read in HOI4's actual load order:
 
-```bash
-cd hoi4_parser && cargo build --release
-```
+1. Base game files in the install dir.
+2. Each enabled mod from the active playset, in `position` order — read from `~/Documents/Paradox Interactive/Hearts of Iron IV/launcher-v2.sqlite`.
+3. Later sources override earlier ones, matching how HOI4 itself resolves the stack.
 
-## Localisation resolution
+For state files specifically, the unit of replacement is the **state ID**, not the filename — a mod redefining state 13 in `13-Estonia.txt` correctly displaces base game's `13-Karelia.txt`, even though the filenames don't match.
 
-`src/localization.py` resolves text in HOI4's actual load order:
-
-1. Base game `localisation/english/`
-2. Each enabled mod from the active playset, in `position` order — read from `~/Documents/Paradox Interactive/Hearts of Iron IV/launcher-v2.sqlite`. Last writer wins, matching how HOI4 itself resolves the stack.
+The launcher DB and saves dir are auto-detected; override via `HOI4_USER_DIR` and `HOI4_SAVES_DIR` env vars for non-standard installs.
 
 If the launcher DB is missing or unreadable, the loader degrades gracefully to base-game-only.
 
-Override the user-data location with `HOI4_USER_DIR` if your install isn't at the default Documents path.
+## Tests
+
+```bash
+python -m pytest
+```
+
+~130 tests, all hermetic — they build synthetic mod trees, fake launcher SQLite DBs, and tiny synthetic saves in `tmp_path`. They don't depend on your actual HOI4 install or current playset, so they pass anywhere.
