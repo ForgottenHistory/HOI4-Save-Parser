@@ -260,3 +260,118 @@ class TestGetters:
         # Critical: must NOT fall back to a cleaned-key string. A missing
         # description is normal and should be empty so the CLI can skip it.
         assert loc.get_focus_description("CAN_no_such_focus") == ""
+
+
+class TestGetCountryDisplayName:
+    """The dynamic/cosmetic-aware name resolver. Captures the layered lookup
+    priority that makes WHR/RUS/BAT render correctly under KR."""
+
+    def test_cosmetic_plus_party_wins(self, make_localizer, hoi4_install):
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "WHR_BEL_syndicalist_DEF": "the Belarusian Workers' Socialist Republic",
+                "WHR_BEL_DEF": "Belarus",
+                "WHR_syndicalist_DEF": "Belarusian People's Republic",
+                "WHR_DEF": "WHR fallback",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        assert (
+            loc.get_country_display_name("WHR", cosmetic_tag="WHR_BEL", ruling_party="syndicalist")
+            == "the Belarusian Workers' Socialist Republic"
+        )
+
+    def test_falls_through_to_cosmetic_only(self, make_localizer, hoi4_install):
+        # Cosmetic-with-party key doesn't exist, but cosmetic alone does.
+        # This is the real RUS->SOV case: SOV_syndicalist_DEF isn't defined
+        # but SOV_DEF is.
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "SOV_DEF": "the Russian Socialist Federative Soviet Republic",
+                "RUS_syndicalist_DEF": "the Russian Republic",
+                "RUS_DEF": "Russia",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        assert (
+            loc.get_country_display_name("RUS", cosmetic_tag="SOV", ruling_party="syndicalist")
+            == "the Russian Socialist Federative Soviet Republic"
+        )
+
+    def test_falls_through_to_tag_plus_party(self, make_localizer, hoi4_install):
+        # No cosmetic data — pure ideology variant on the bare tag.
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "CAN_market_liberal_DEF": "the Kingdom of Canada",
+                "CAN_DEF": "Canada",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        assert (
+            loc.get_country_display_name("CAN", cosmetic_tag=None, ruling_party="market_liberal")
+            == "the Kingdom of Canada"
+        )
+
+    def test_falls_through_to_bare_tag_then_def(self, make_localizer, hoi4_install):
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {"RUS": "Russia"},
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        # No party-specific key, just the bare tag — pre-existing behaviour.
+        assert loc.get_country_display_name("RUS") == "Russia"
+
+    def test_blind_fallback_globs_for_any_def_variant(self, make_localizer, hoi4_install):
+        # The BAT case: no cosmetic data in the save, no plain BAT key,
+        # but dozens of BAT_*_DEF variants exist. We pick the alphabetical
+        # first so the result is deterministic AND readable, rather than
+        # falling back to "Bat".
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "BAT_FED_paternal_autocrat_DEF": "the Baltic Federation",
+                "BAT_PRI_DEF": "the General-Governorate of Pribaltika",
+                "BAT_Riga_DEF": "the Commune of Riga",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        result = loc.get_country_display_name("BAT")
+        # Whatever it picks, it must be one of the real values — not "Bat".
+        assert result in {
+            "the Baltic Federation",
+            "the General-Governorate of Pribaltika",
+            "the Commune of Riga",
+        }
+
+    def test_final_fallback_to_cleaned_key(self, make_localizer):
+        # No keys at all for this tag — final cleaned-key behaviour kicks in.
+        # _clean_key_for_display title-cases bare tags ("ZZZ" -> "Zzz").
+        # Ugly but consistent with the pre-existing fallback.
+        loc = make_localizer()
+        assert loc.get_country_display_name("ZZZ") == "Zzz"
+
+    def test_ignores_empty_string_lookups(self, make_localizer, hoi4_install):
+        # If a localized value happens to be the empty string, treat it as
+        # "missing" and continue to the next candidate. This guards against
+        # KR having a stub entry that would otherwise short-circuit to "".
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "_RAW:1": ' XYZ_paternal_autocrat_DEF:0 ""',
+                "XYZ_DEF": "the Real Name",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        result = loc.get_country_display_name(
+            "XYZ", cosmetic_tag=None, ruling_party="paternal_autocrat"
+        )
+        assert result == "the Real Name"

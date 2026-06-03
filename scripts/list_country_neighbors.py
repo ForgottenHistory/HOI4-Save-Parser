@@ -19,6 +19,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from localization import HOI4Localizer  # noqa: E402
 from map_data import get_country_neighbors  # noqa: E402
+from save_parsing import parse_country_name_hints  # noqa: E402
+
+
+def _display(loc: HOI4Localizer, tag: str, hints: dict) -> str:
+    h = hints.get(tag, {})
+    return loc.get_country_display_name(
+        tag,
+        cosmetic_tag=h.get("cosmetic_tag"),
+        ruling_party=h.get("ruling_party"),
+    )
 
 
 def main():
@@ -41,6 +51,9 @@ def main():
         print(f"No land neighbors found for {tag} (or {tag} owns no states)")
         sys.exit(2)
 
+    print("Extracting per-country naming hints from save ...")
+    hints = parse_country_name_hints(save_text)
+
     print("Loading KR-aware localization for display names ...")
     import contextlib
     import io
@@ -49,10 +62,10 @@ def main():
         loc.load_all_files()
 
     print()
-    print(f"==== {tag}: {loc.get_country_name(tag)} ====")
+    print(f"==== {tag}: {_display(loc, tag, hints)} ====")
     print(f"Land neighbors: {len(neighbors)}")
     for n in neighbors:
-        print(f"  {n:4}  {loc.get_country_name(n)}")
+        print(f"  {n:4}  {_display(loc, n, hints)}")
 
 
 if __name__ == "__main__":

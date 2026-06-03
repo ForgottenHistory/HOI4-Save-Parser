@@ -220,16 +220,72 @@ class HOI4Localizer:
             ideological_key = f"{tag}_{ideology}"
             if ideological_key in self.translations:
                 return self.translations[ideological_key]
-        
+
         # Try generic country name
         if tag in self.translations:
             return self.translations[tag]
-        
+
         patterns = [f"{tag}_NAME", f"{tag}_DEF", f"{tag}_ADJ"]
         for pattern in patterns:
             if pattern in self.translations:
                 return self.translations[pattern]
-        
+
+        return self._clean_key_for_display(tag)
+
+    def get_country_display_name(
+        self,
+        tag: str,
+        cosmetic_tag: Optional[str] = None,
+        ruling_party: Optional[str] = None,
+    ) -> str:
+        """Resolve a country's currently-displayed name from save-state hints.
+
+        HOI4 (especially mods like Kaiserredux) stores country names along
+        two runtime axes:
+        - `cosmetic_tag` — a save-time override identifying which name set
+          is active (e.g. WHR's cosmetic_tag=WHR_BEL means look up the
+          "Belarus" name family, not the bare WHR keys).
+        - `ruling_party` — selects an ideology-specific variant within a
+          name set (e.g. WHR_BEL_syndicalist_DEF vs WHR_BEL_market_liberal_DEF).
+
+        Lookup order, most specific to least:
+          1. <cosmetic>_<party>_DEF
+          2. <cosmetic>_DEF
+          3. <tag>_<party>_DEF
+          4. <tag>_DEF / <tag> / <tag>_NAME
+          5. any <tag>_*_DEF (alphabetical first) so dynamic-only tags
+             surface SOMETHING readable instead of a cleaned-key fallback.
+          6. _clean_key_for_display(tag) — last resort.
+
+        Returns the `_DEF` ("definite article") form when available; this is
+        what you'd say in a list ("the Baltic Federation", "the Russian
+        Empire"). Strip the leading "the " yourself if you need a noun-phrase.
+        """
+        candidates = []
+        if cosmetic_tag and ruling_party:
+            candidates.append(f"{cosmetic_tag}_{ruling_party}_DEF")
+        if cosmetic_tag:
+            candidates.append(f"{cosmetic_tag}_DEF")
+        if ruling_party:
+            candidates.append(f"{tag}_{ruling_party}_DEF")
+        candidates += [f"{tag}_DEF", tag, f"{tag}_NAME", f"{tag}_ADJ"]
+        for key in candidates:
+            value = self.translations.get(key)
+            if value:
+                return value
+
+        # Last-ditch fallback: scan for any <tag>_<sub>_DEF. This catches
+        # dynamic-only tags like BAT which have no plain key but ship dozens
+        # of `BAT_FED_*_DEF` / `BAT_PRI_*_DEF` / etc. We pick the first
+        # alphabetically — arbitrary but deterministic, and far more useful
+        # than a cleaned-key like "Bat".
+        prefix = f"{tag}_"
+        for key in sorted(self.translations):
+            if key.startswith(prefix) and key.endswith("_DEF"):
+                value = self.translations[key]
+                if value:
+                    return value
+
         return self._clean_key_for_display(tag)
     
     def get_event_name(self, event_id: str) -> str:

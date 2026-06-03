@@ -19,51 +19,27 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from localization import HOI4Localizer
+from save_parsing import find_country_block, walk_block
 
-
-def _walk_block(text: str, open_pos: int) -> int:
-    """Return index one past the matching `}` for a `{` already consumed at open_pos."""
-    depth = 1
-    i = open_pos
-    n = len(text)
-    while depth and i < n:
-        c = text[i]
-        if c == '{':
-            depth += 1
-        elif c == '}':
-            depth -= 1
-        i += 1
-    return i
+# Back-compat alias for callers/tests that imported the old private helper.
+_walk_block = walk_block
 
 
 def find_country_focus_block(save_text: str, tag: str) -> Optional[str]:
     """Return the inside of the country's focus block.
 
-    The save's `countries` section contains entries like `\\n\\t<TAG>={ ... }`
-    where the body can span millions of characters. Inside, the focus block
-    appears as `\\n\\t\\tfocus={ ... }`. We locate the country block by its
-    tab-indented header, brace-walk its full extent, then find the focus block
-    within that range.
-
-    Returns None if the tag isn't found; '' if the country exists but has no
-    focus block (e.g. a country with no focus tree).
+    Returns None if the tag isn't found; '' if the country exists but has
+    no focus block (e.g. a country with no focus tree).
     """
-    header = f'\n\t{tag}=' + '{'
-    # Each country block opener appears exactly once in well-formed saves, but
-    # be defensive: skip openers whose body lacks the expected country fields.
-    for hm in re.finditer(re.escape(header), save_text):
-        body_start = hm.end()
-        body_end = _walk_block(save_text, body_start)
-        body = save_text[body_start:body_end - 1]
-        if 'focus_tree=' not in body and 'ruling_party=' not in body:
-            continue  # Not the real country block (e.g. a relation entry).
-        fm = re.search(r'\n\t\tfocus=\{', body)
-        if not fm:
-            return ''  # Country exists but has no focus block.
-        f_start = fm.end()
-        f_end = _walk_block(body, f_start)
-        return body[f_start:f_end - 1]
-    return None
+    body = find_country_block(save_text, tag)
+    if body is None:
+        return None
+    fm = re.search(r'\n\t\tfocus=\{', body)
+    if not fm:
+        return ''
+    f_start = fm.end()
+    f_end = walk_block(body, f_start)
+    return body[f_start:f_end - 1]
 
 
 def extract_focus_ids(save_text: str, tag: str) -> Optional[dict]:
