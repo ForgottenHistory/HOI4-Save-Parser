@@ -40,6 +40,7 @@ from localization import HOI4Localizer
 from map_data import get_country_neighbors, get_country_provinces
 from save_locator import find_autosave_path, read_signature
 from save_parsing import (
+    get_game_date,
     get_player_tag,
     parse_character_names,
     parse_country_name_hints,
@@ -187,6 +188,11 @@ class HOI4Session:
         regex on the loaded save text, microseconds even on a 200MB save.
         """
         return get_player_tag(self.save_text)
+
+    @property
+    def game_date(self) -> Optional[Dict[str, object]]:
+        """The current in-game date as {year, month, day, hour, raw}, or None."""
+        return get_game_date(self.save_text)
 
     # ------------------------------------------------------------------
     # Per-country queries with per-tag caching

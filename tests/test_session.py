@@ -171,6 +171,26 @@ class TestQueryPassthrough:
         # The synthetic save fixture writes `player="CAN"` in the header.
         assert session.player_tag == "CAN"
 
+    def test_game_date_from_save_header(self, session, session_save):
+        # Synthetic save doesn't include date= by default, so add one.
+        # The fixture writes player="CAN" first; we prepend a date line.
+        text = session_save.read_text(encoding="utf-8")
+        session_save.write_text(
+            text.replace('player="CAN"\n', 'player="CAN"\ndate="1946.5.28.24"\n'),
+            encoding="utf-8",
+        )
+        # Force refresh to see the new content (and update signature).
+        import os
+        sig = session.current_signature
+        if sig is not None:
+            os.utime(session_save, (sig[0] + 2, sig[0] + 2))
+        session.refresh()
+        d = session.game_date
+        assert d == {
+            "year": 1946, "month": 5, "day": 28, "hour": 24,
+            "raw": "1946.5.28.24",
+        }
+
     def test_country_display_name_uses_hints(self, session):
         session.refresh()
         # ruling_party hint from the save drives the lookup priority,

@@ -23,6 +23,10 @@ _COSMETIC_TAG_RE = re.compile(r'\bcosmetic_tag\s*=\s*"([^"]*)"')
 # many `player=...` lines that appear deeper in the save (per-character,
 # per-decision, etc.).
 _PLAYER_TAG_RE = re.compile(r'^player="([A-Z0-9]{3})"', re.MULTILINE)
+# Top-of-file date="YYYY.M.D.H". Same anchoring concern as player above —
+# `date=` shows up deep in war/event/character blocks, but only the header
+# date represents the current game state.
+_GAME_DATE_RE = re.compile(r'^date="(\d{1,4})\.(\d{1,2})\.(\d{1,2})\.(\d{1,2})"', re.MULTILINE)
 
 
 def get_player_tag(save_text: str) -> Optional[str]:
@@ -34,6 +38,30 @@ def get_player_tag(save_text: str) -> Optional[str]:
     """
     m = _PLAYER_TAG_RE.search(save_text)
     return m.group(1) if m else None
+
+
+def get_game_date(save_text: str) -> Optional[Dict[str, object]]:
+    """Return the current in-game date from the save header.
+
+    Shape: ``{'year', 'month', 'day', 'hour', 'raw'}`` or None if absent.
+
+    HOI4 dates are ``YYYY.M.D.H`` (one-or-two-digit M/D/H, NOT zero-padded).
+    The hour component runs 0..24 — yes, 24 not 23: HOI4 internally uses
+    "1-indexed hours within the day" so the last tick of May 28 is
+    ``1946.5.28.24`` rather than rolling to the next day. We surface the
+    raw value rather than normalising; consumers comparing dates should
+    treat hour 24 as "end of <day>".
+    """
+    m = _GAME_DATE_RE.search(save_text)
+    if not m:
+        return None
+    return {
+        "year":  int(m.group(1)),
+        "month": int(m.group(2)),
+        "day":   int(m.group(3)),
+        "hour":  int(m.group(4)),
+        "raw":   f"{m.group(1)}.{m.group(2)}.{m.group(3)}.{m.group(4)}",
+    }
 
 
 def walk_block(text: str, open_pos: int) -> int:

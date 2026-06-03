@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from save_parsing import (
     find_country_block,
+    get_game_date,
     get_player_tag,
     parse_country_name_hints,
     walk_block,
@@ -160,3 +161,42 @@ class TestGetPlayerTag:
             '}\n'
         )
         assert get_player_tag(save) == "WRA"
+
+
+# ---------------------------------------------------------------------------
+# get_game_date
+# ---------------------------------------------------------------------------
+
+class TestGetGameDate:
+    def test_parses_components_and_raw(self):
+        save = 'HOI4txt\nplayer="CAN"\ndate="1946.5.28.24"\nrest\n'
+        assert get_game_date(save) == {
+            "year": 1946, "month": 5, "day": 28, "hour": 24,
+            "raw": "1946.5.28.24",
+        }
+
+    def test_single_digit_components(self):
+        # HOI4 does NOT zero-pad — start of game is 1936.1.1.12 not 1936.01.01.12.
+        save = 'HOI4txt\ndate="1936.1.1.1"\n'
+        d = get_game_date(save)
+        assert d["month"] == 1 and d["day"] == 1 and d["hour"] == 1
+        assert d["raw"] == "1936.1.1.1"
+
+    def test_returns_none_when_missing(self):
+        assert get_game_date("HOI4txt\nplayer=\"CAN\"\n") is None
+
+    def test_ignores_date_lines_deeper_in_save(self):
+        # `date="..."` shows up inside war blocks, character birthdays,
+        # last_election fields, etc. Only the anchored header date is the
+        # game's current date.
+        save = (
+            'HOI4txt\n'
+            'date="1946.5.28.24"\n'
+            'wars={\n'
+            '\twar={\n'
+            '\t\tdate="1939.9.1.12"\n'   # not the game date
+            '\t}\n'
+            '}\n'
+        )
+        d = get_game_date(save)
+        assert d["raw"] == "1946.5.28.24"
