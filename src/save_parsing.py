@@ -10,7 +10,7 @@ diplomatic-relation entries.
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 # Country tags in saves are 3-character A-Z0-9 codes; some mods use longer
@@ -97,3 +97,119 @@ def parse_country_name_hints(save_text: str) -> Dict[str, Dict[str, Optional[str
             rp = rpm.group(1)
         hints[tag] = {"cosmetic_tag": cosmetic, "ruling_party": rp}
     return hints
+
+
+# ---------------------------------------------------------------------------
+# Political parties
+# ---------------------------------------------------------------------------
+
+_PARTIES_BLOCK_RE = re.compile(r"\n\t\t\tparties=\{")
+_PARTY_OPENER_RE = re.compile(r"\n\t\t\t\t([a-z_]+)=\{")
+_POPULARITY_RE = re.compile(r"\bpopularity\s*=\s*([\d.]+)")
+_DEFAULT_RE = re.compile(r"\bdefault\s*=\s*(yes|no)")
+_PARTY_NAME_OVERRIDE_RE = re.compile(r'\bname\s*=\s*"([^"]+)"')
+_PARTY_LONG_NAME_OVERRIDE_RE = re.compile(r'\blong_name\s*=\s*"([^"]+)"')
+# country_leader array entries: each {ideology="..." character={ id=N type=T }}
+_LEADER_ENTRY_RE = re.compile(
+    r'ideology\s*=\s*"(?P<ideology>[^"]+)"\s*'
+    r"character\s*=\s*\{\s*id\s*=\s*(?P<id>\d+)\s+type\s*=\s*\d+\s*\}",
+    re.DOTALL,
+)
+
+
+def parse_country_parties(
+    save_text: str, tag: str
+) -> Optional[Dict[str, dict]]:
+    """Return the parties block for a country, keyed by party id.
+
+    Shape:
+        {
+            'paternal_autocrat': {
+                'popularity': 33.98,
+                'is_default': True,
+                'name_override': 'GBR_paternal_autocrat_party' or None,
+                'long_name_override': 'GBR_paternal_autocrat_party_long' or None,
+                'leaders': [
+                    {'ideology': 'junta_subtype', 'character_id': 5511},
+                    ...
+                ],
+            },
+            ...
+        }
+
+    Returns None if the country has no parsable politics.parties block.
+
+    The name overrides are loc keys, not display strings — the localizer
+    resolves them. They appear when KR uses a cosmetic system to display
+    a different party name (e.g. CAN's social_liberal showing as the
+    British Liberal Party while CAN is part of the Empire).
+    """
+    body = find_country_block(save_text, tag)
+    if body is None:
+        return None
+    pm = _PARTIES_BLOCK_RE.search(body)
+    if not pm:
+        return None
+    block_start = pm.end()
+    block_end = walk_block(body, block_start)
+    parties_block = body[block_start:block_end - 1]
+
+    result: Dict[str, dict] = {}
+    for opener in _PARTY_OPENER_RE.finditer(parties_block):
+        party_id = opener.group(1)
+        pb_start = opener.end()
+        pb_end = walk_block(parties_block, pb_start)
+        pbody = parties_block[pb_start:pb_end - 1]
+
+        pop_m = _POPULARITY_RE.search(pbody)
+        popularity = float(pop_m.group(1)) if pop_m else 0.0
+        default_m = _DEFAULT_RE.search(pbody)
+        is_default = default_m and default_m.group(1) == "yes"
+        name_m = _PARTY_NAME_OVERRIDE_RE.search(pbody)
+        long_m = _PARTY_LONG_NAME_OVERRIDE_RE.search(pbody)
+
+        leaders = [
+            {"ideology": m.group("ideology"), "character_id": int(m.group("id"))}
+            for m in _LEADER_ENTRY_RE.finditer(pbody)
+        ]
+
+        result[party_id] = {
+            "popularity": popularity,
+            "is_default": bool(is_default),
+            "name_override": name_m.group(1) if name_m else None,
+            "long_name_override": long_m.group(1) if long_m else None,
+            "leaders": leaders,
+        }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Character names
+# ---------------------------------------------------------------------------
+
+# Character entries look like:
+#   id={ id=70894 type=73 }
+#     token="WRA_ilya_polyakov"
+#     name="Ilya Polyakov"
+#     country="WRA"
+# We scan specifically for type=73 (the character type) — the same numeric
+# ID is reused for equipment (type=70), organizations (type=79), research
+# projects (type=86) etc., and matching those would pull unrelated `name=`
+# fields like equipment template names.
+_CHARACTER_NAME_RE = re.compile(
+    r'\bid=(\d+)\s+type=73\s*\}'          # id=70894 type=73 }
+    r'(?:\s*token="[^"]*")?'              # optional token (usually present)
+    r'\s*name="([^"]+)"'                  # name="Ilya Polyakov"
+)
+
+
+def parse_character_names(save_text: str) -> Dict[int, str]:
+    """Return ``{character_id: name}`` for every character in the save.
+
+    Scans the whole save once. KR saves with ~70k characters this completes
+    in well under a second.
+    """
+    return {
+        int(m.group(1)): m.group(2)
+        for m in _CHARACTER_NAME_RE.finditer(save_text)
+    }

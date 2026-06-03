@@ -315,3 +315,53 @@ class HOI4Localizer:
         and should not surface as 'Some Focus Desc')."""
         desc_key = f"{focus_id}_desc"
         return self.translations.get(desc_key, "")
+
+    @staticmethod
+    def _clean_display_string(value: str) -> str:
+        """Strip HOI4 inline formatting from a string for single-line display.
+
+        Removes ``§X`` color/style codes and truncates at the first ``\\n``
+        (or literal ``\\n`` sequence stored in the yml). KR's party names
+        often store ``Native Name\\n§LEnglish Translation§!`` — for a CLI
+        row, only the first line is useful.
+        """
+        if not value:
+            return value
+        # Locale files store newlines as the two-character escape "\n", not as
+        # an actual newline byte. Cut at either.
+        for sep in ("\\n", "\n"):
+            idx = value.find(sep)
+            if idx >= 0:
+                value = value[:idx]
+                break
+        # Strip color/style codes like §L ... §! and bare §X.
+        value = re.sub(r"§.", "", value)
+        return value.strip()
+
+    def get_party_names(self, tag: str, party_id: str) -> Dict[str, str]:
+        """Return the localized name forms for a country's political party.
+
+        Returns ``{'short', 'long_raw', 'long_clean'}``:
+        - ``short``: abbreviation key ``<TAG>_<party_id>_party``
+          (e.g. ``CAN_national_populist_party`` -> "IUP").
+        - ``long_raw``: full key ``<TAG>_<party_id>_party_long``, unmodified.
+        - ``long_clean``: long_raw with HOI4 formatting stripped and
+          truncated at the first ``\\n`` for single-line display.
+
+        Any missing key returns an empty string. Callers that want the
+        raw key resolved through ``$var$`` references should use
+        ``get_localized_text`` directly.
+        """
+        short = self.get_localized_text(f"{tag}_{party_id}_party")
+        long_raw = self.get_localized_text(f"{tag}_{party_id}_party_long")
+        # get_localized_text falls back to a cleaned key when missing; that
+        # noise is unhelpful here, so suppress it when the key is absent.
+        if f"{tag}_{party_id}_party" not in self.translations:
+            short = ""
+        if f"{tag}_{party_id}_party_long" not in self.translations:
+            long_raw = ""
+        return {
+            "short": short,
+            "long_raw": long_raw,
+            "long_clean": self._clean_display_string(long_raw),
+        }
