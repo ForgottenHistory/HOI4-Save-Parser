@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from save_parsing import find_country_block, parse_country_name_hints, walk_block
+from save_parsing import (
+    find_country_block,
+    get_player_tag,
+    parse_country_name_hints,
+    walk_block,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -118,3 +123,40 @@ class TestParseCountryNameHints:
         hints = parse_country_name_hints(save)
         assert hints["GER"] == {"cosmetic_tag": None, "ruling_party": "authoritarian_democrat"}
         assert hints["FRA"] == {"cosmetic_tag": "FRA_CFR", "ruling_party": "syndicalist"}
+
+
+# ---------------------------------------------------------------------------
+# get_player_tag
+# ---------------------------------------------------------------------------
+
+class TestGetPlayerTag:
+    def test_extracts_tag_from_save_header(self):
+        save = (
+            'HOI4txt\n'
+            'player="CAN"\n'
+            'ideology=national_populist\n'
+            'date="1946.5.28.24"\n'
+        )
+        assert get_player_tag(save) == "CAN"
+
+    def test_returns_none_when_missing(self):
+        assert get_player_tag("HOI4txt\nno player field here") is None
+
+    def test_ignores_player_substrings_deeper_in_save(self):
+        # The save has tons of fields containing "player" (player_countries=,
+        # player_id=, etc.) and other `player=` lines deep inside character
+        # or decision blocks. We must only match the top-level header.
+        save = (
+            'HOI4txt\n'
+            'player="WRA"\n'
+            'date="1936.7.19.1"\n'
+            'player_countries={\n'
+            '\tWRA={\n'
+            '\t\tuser="Meanie"\n'
+            '\t}\n'
+            '}\n'
+            'some_block={\n'
+            '\tplayer="FAKE"\n'   # indented — must be ignored
+            '}\n'
+        )
+        assert get_player_tag(save) == "WRA"

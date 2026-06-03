@@ -166,6 +166,11 @@ class TestCacheBehavior:
 # ---------------------------------------------------------------------------
 
 class TestQueryPassthrough:
+    def test_player_tag_from_save_header(self, session):
+        session.refresh()
+        # The synthetic save fixture writes `player="CAN"` in the header.
+        assert session.player_tag == "CAN"
+
     def test_country_display_name_uses_hints(self, session):
         session.refresh()
         # ruling_party hint from the save drives the lookup priority,

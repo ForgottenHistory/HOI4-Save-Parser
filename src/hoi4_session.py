@@ -40,6 +40,7 @@ from localization import HOI4Localizer
 from map_data import get_country_neighbors, get_country_provinces
 from save_locator import find_autosave_path, read_signature
 from save_parsing import (
+    get_player_tag,
     parse_character_names,
     parse_country_name_hints,
 )
@@ -177,6 +178,15 @@ class HOI4Session:
         if self._hints is None:
             self._hints = parse_country_name_hints(self.save_text)
         return self._hints
+
+    @property
+    def player_tag(self) -> Optional[str]:
+        """The single-player country tag from the save header (None if absent).
+
+        Doesn't need its own cache — get_player_tag is a single anchored
+        regex on the loaded save text, microseconds even on a 200MB save.
+        """
+        return get_player_tag(self.save_text)
 
     # ------------------------------------------------------------------
     # Per-country queries with per-tag caching

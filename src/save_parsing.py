@@ -19,6 +19,21 @@ from typing import Dict, List, Optional
 _COUNTRY_TAG_RE = re.compile(r"\n\t([A-Z0-9]{3})=\{")
 _RULING_PARTY_RE = re.compile(r'\bruling_party\s*=\s*"?(\w+)"?')
 _COSMETIC_TAG_RE = re.compile(r'\bcosmetic_tag\s*=\s*"([^"]*)"')
+# Top-of-file player="TAG". Anchored to the start so we don't pick up the
+# many `player=...` lines that appear deeper in the save (per-character,
+# per-decision, etc.).
+_PLAYER_TAG_RE = re.compile(r'^player="([A-Z0-9]{3})"', re.MULTILINE)
+
+
+def get_player_tag(save_text: str) -> Optional[str]:
+    """Return the single-player country tag from the save header, or None.
+
+    HOI4 writes ``player="TAG"`` in the first few lines of every save. For
+    multiplayer saves, ``player_countries={ TAG1={...} TAG2={...} }`` lists
+    everyone — this helper covers the single-player case only.
+    """
+    m = _PLAYER_TAG_RE.search(save_text)
+    return m.group(1) if m else None
 
 
 def walk_block(text: str, open_pos: int) -> int:
