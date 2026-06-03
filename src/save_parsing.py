@@ -103,6 +103,7 @@ def parse_country_name_hints(save_text: str) -> Dict[str, Dict[str, Optional[str
 # Political parties
 # ---------------------------------------------------------------------------
 
+_IDEAS_BLOCK_RE = re.compile(r"\n\t\t\tideas=\{")
 _PARTIES_BLOCK_RE = re.compile(r"\n\t\t\tparties=\{")
 _PARTY_OPENER_RE = re.compile(r"\n\t\t\t\t([a-z_]+)=\{")
 _POPULARITY_RE = re.compile(r"\bpopularity\s*=\s*([\d.]+)")
@@ -213,3 +214,33 @@ def parse_character_names(save_text: str) -> Dict[int, str]:
         int(m.group(1)): m.group(2)
         for m in _CHARACTER_NAME_RE.finditer(save_text)
     }
+
+
+# ---------------------------------------------------------------------------
+# National ideas
+# ---------------------------------------------------------------------------
+
+def parse_country_ideas(save_text: str, tag: str) -> Optional[List[str]]:
+    """Return the list of active national-idea IDs for a country, in save order.
+
+    The save stores them as a flat whitespace-separated list inside
+    ``politics={ ... ideas={ ID1 ID2 ID3 ... } }``. We return raw IDs only —
+    name/description resolution happens in the localizer layer, and category
+    grouping (economy law / trade law / country idea / ...) would require
+    parsing ``common/ideas/*.txt`` which we don't do.
+
+    Returns None if the country has no parsable country block.
+    """
+    body = find_country_block(save_text, tag)
+    if body is None:
+        return None
+    bm = _IDEAS_BLOCK_RE.search(body)
+    if not bm:
+        # Country exists but has no ideas block — extremely unusual but
+        # treat as "no ideas active" rather than "country missing".
+        return []
+    block_start = bm.end()
+    block_end = walk_block(body, block_start)
+    inner = body[block_start:block_end - 1]
+    # Just split on whitespace; idea IDs are bare identifiers.
+    return inner.split()

@@ -306,6 +306,48 @@ class HOI4Localizer:
         """Get national idea name"""
         return self.get_localized_text(idea_id)
 
+    def get_idea_display(self, idea_id: str) -> Dict[str, object]:
+        """Resolve a national idea's display info from the locale table.
+
+        Returns ``{'name', 'description', 'is_hidden'}`` where:
+
+        - ``name``: display name. Falls back to the level-stripped variant
+          (``WRA_german_support_1`` -> looks up ``WRA_german_support``)
+          when the exact key is missing; KR levels share base locale for
+          many ideas. Empty string when no name resolves at all.
+        - ``description``: ``<id>_desc`` (or its level-stripped variant).
+          Empty string when missing — descriptions are often genuinely
+          absent for scripted ideas.
+        - ``is_hidden``: True when the idea is internal/UI-hidden. We
+          flag ideas whose ID ends in ``_hidden`` or which have no
+          resolvable name AND no level-stripped fallback. Match these
+          to what the player doesn't see in-game.
+        """
+        # Try the exact key, then a level-stripped variant.
+        candidates = [idea_id]
+        stripped = re.sub(r"_\d+$", "", idea_id)
+        if stripped != idea_id:
+            candidates.append(stripped)
+
+        name = ""
+        desc = ""
+        for key in candidates:
+            if not name and key in self.translations:
+                name = self.translations[key]
+            desc_key = f"{key}_desc"
+            if not desc and desc_key in self.translations:
+                desc = self.translations[desc_key]
+            if name and desc:
+                break
+
+        is_hidden = idea_id.endswith("_hidden") or not name
+        return {
+            "name": name,
+            "name_clean": self._clean_display_string(name),
+            "description": desc,
+            "is_hidden": is_hidden,
+        }
+
     def get_focus_description(self, focus_id: str) -> str:
         """Return the localized description for a national focus.
 
