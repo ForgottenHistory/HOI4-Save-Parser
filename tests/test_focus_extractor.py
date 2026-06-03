@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import re
 
-from list_country_focuses import _walk_block, find_country_focus_block
+from list_country_focuses import (
+    _walk_block,
+    extract_focus_ids,
+    find_country_focus_block,
+    get_country_focuses,
+)
 
 
 def _country_block(tag: str, focus_body: str, extra: str = "ruling_party=foo") -> str:
@@ -121,3 +126,111 @@ class TestFindCountryFocusBlock:
         # And the nested structure is still intact in the returned body.
         assert "nested_thing={" in block
         assert "deeper={" in block
+
+
+# ----------------------------------------------------------------------------
+# extract_focus_ids — pure-string layer, no localizer.
+# ----------------------------------------------------------------------------
+
+class TestExtractFocusIds:
+    def test_returns_completed_and_current(self):
+        focus = (
+            '\t\t\tcompleted="CAN_a"\n'
+            '\t\t\tcompleted="CAN_b"\n'
+            '\t\t\tcurrent="CAN_in_progress"'
+        )
+        save = "header\n" + _country_block("CAN", focus)
+        result = extract_focus_ids(save, "CAN")
+        assert result == {
+            "completed": ["CAN_a", "CAN_b"],
+            "current": "CAN_in_progress",
+        }
+
+    def test_returns_none_for_missing_tag(self):
+        save = "header\n" + _country_block("GER", '\t\t\tcompleted="GER_x"')
+        assert extract_focus_ids(save, "CAN") is None
+
+    def test_returns_empty_lists_when_no_focuses_completed(self):
+        save = "header\n" + _country_block("CAN", "\t\t\t")
+        result = extract_focus_ids(save, "CAN")
+        assert result == {"completed": [], "current": None}
+
+
+# ----------------------------------------------------------------------------
+# get_country_focuses — structured + localized return.
+# ----------------------------------------------------------------------------
+
+class TestGetCountryFocuses:
+    def _make_loc(self, make_localizer, hoi4_install, entries):
+        from conftest import write_yml
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            entries,
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        return loc
+
+    def test_returns_structured_dict_with_titles_and_descriptions(
+        self, make_localizer, hoi4_install
+    ):
+        loc = self._make_loc(
+            make_localizer,
+            hoi4_install,
+            {
+                "CAN": "Canada",
+                "CAN_kings_speech": "The King's Speech",
+                "CAN_kings_speech_desc": "Edward will be crowned king.",
+                "CAN_crown_corporations": "Crown Corporations",
+                # No _desc for crown_corporations: empty string expected.
+            },
+        )
+        focus = (
+            '\t\t\tcompleted="CAN_kings_speech"\n'
+            '\t\t\tcompleted="CAN_crown_corporations"'
+        )
+        save = "header\n" + _country_block("CAN", focus)
+
+        result = get_country_focuses(save, "CAN", loc)
+        assert result is not None
+        assert result["tag"] == "CAN"
+        assert result["country_name"] == "Canada"
+        assert result["current"] is None
+        assert result["completed"] == [
+            {
+                "id": "CAN_kings_speech",
+                "title": "The King's Speech",
+                "description": "Edward will be crowned king.",
+            },
+            {
+                "id": "CAN_crown_corporations",
+                "title": "Crown Corporations",
+                "description": "",
+            },
+        ]
+
+    def test_includes_current_focus_when_in_progress(
+        self, make_localizer, hoi4_install
+    ):
+        loc = self._make_loc(
+            make_localizer,
+            hoi4_install,
+            {
+                "CAN": "Canada",
+                "CAN_in_progress": "Active Plan",
+                "CAN_in_progress_desc": "We are working on it.",
+            },
+        )
+        save = "header\n" + _country_block("CAN", '\t\t\tcurrent="CAN_in_progress"')
+        result = get_country_focuses(save, "CAN", loc)
+        assert result is not None
+        assert result["current"] == {
+            "id": "CAN_in_progress",
+            "title": "Active Plan",
+            "description": "We are working on it.",
+        }
+
+    def test_returns_none_when_tag_not_in_save(self, make_localizer, hoi4_install):
+        loc = self._make_loc(make_localizer, hoi4_install, {})
+        save = "header\n" + _country_block("GER", '\t\t\tcompleted="GER_x"')
+        assert get_country_focuses(save, "CAN", loc) is None

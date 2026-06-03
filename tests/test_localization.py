@@ -240,3 +240,23 @@ class TestGetters:
         loc = make_localizer()
         # Hidden events that have no localization just return the raw ID.
         assert loc.get_event_name("hidden_event.99") == "hidden_event.99"
+
+    def test_get_focus_description_returns_value_when_present(
+        self, make_localizer, hoi4_install
+    ):
+        write_yml(
+            hoi4_install / "localisation" / "english" / "x_l_english.yml",
+            {
+                "CAN_kings_speech": "The King's Speech",
+                "CAN_kings_speech_desc": "Edward will be crowned king.",
+            },
+        )
+        loc = make_localizer()
+        loc.load_all_files()
+        assert loc.get_focus_description("CAN_kings_speech") == "Edward will be crowned king."
+
+    def test_get_focus_description_returns_empty_string_when_missing(self, make_localizer):
+        loc = make_localizer()
+        # Critical: must NOT fall back to a cleaned-key string. A missing
+        # description is normal and should be empty so the CLI can skip it.
+        assert loc.get_focus_description("CAN_no_such_focus") == ""

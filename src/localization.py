@@ -250,24 +250,12 @@ class HOI4Localizer:
         """Get national idea name"""
         return self.get_localized_text(idea_id)
 
-def test_localizer():
-    """Test the localization system"""
-    localizer = HOI4Localizer()
-    
-    print("Loading ALL localization files...")
-    print(f"Project locale path: {localizer.project_locale_path}")
-    print(f"Game localization path: {localizer.game_localization_path}")
-    localizer.load_all_files()
-    
-    # Test some lookups
-    test_keys = ['GER', 'SOV', 'USA', 'sour_loser', 'fascism']
-    
-    print("\nTest translations:")
-    for key in test_keys:
-        result = localizer.get_country_name(key) if len(key) == 3 else localizer.get_localized_text(key)
-        print(f"  {key} → {result}")
-    
-    print(f"\nTotal translations available: {len(localizer.translations)}")
+    def get_focus_description(self, focus_id: str) -> str:
+        """Return the localized description for a national focus.
 
-if __name__ == "__main__":
-    test_localizer()
+        HOI4 convention: `<focus_id>` holds the title, `<focus_id>_desc` holds
+        the body text. Returns an empty string when no description exists,
+        rather than a cleaned-key fallback (a missing description is normal
+        and should not surface as 'Some Focus Desc')."""
+        desc_key = f"{focus_id}_desc"
+        return self.translations.get(desc_key, "")
