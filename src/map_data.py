@@ -378,3 +378,46 @@ def get_country_neighbors(
     return compute_neighbors(
         tag, state_owners, state_to_provs, prov_to_state, adj, sea_lake
     )
+
+
+def compute_country_provinces(
+    tag: str,
+    state_owners: Dict[int, str],
+    state_to_provs: Dict[int, Set[int]],
+) -> Dict[int, Set[int]]:
+    """Return ``{state_id: {province_ids}}`` for every state owned by `tag`.
+
+    Pure composition: no I/O. Skips states the country owns but whose
+    state file isn't in `state_to_provs` (e.g. a state in the save that
+    no current mod defines — possible after a playset change).
+    """
+    return {
+        sid: state_to_provs[sid]
+        for sid, owner in state_owners.items()
+        if owner == tag and sid in state_to_provs
+    }
+
+
+def get_country_provinces(
+    save_text: str,
+    tag: str,
+    hoi4_path: Optional[Path] = None,
+    user_data_path: Optional[Path] = None,
+) -> Dict[int, Set[int]]:
+    """High-level entry point. Returns ``{state_id: {province_ids}}`` for
+    every state the given country owns.
+
+    Cheaper than neighbors — no bitmap scan, no adjacency. We need only
+    the mod-aware state files and the save's state-ownership table.
+    """
+    if hoi4_path is None:
+        hoi4_path = Path(
+            r"C:\Program Files (x86)\Steam\steamapps\common\Hearts of Iron IV"
+        )
+    mod_roots = resolve_active_playset_mod_roots(user_data_path)
+
+    state_files = resolve_dir_files("history/states", "*.txt", mod_roots, hoi4_path)
+    state_to_provs, _ = parse_state_files(state_files)
+
+    state_owners = parse_state_owners(save_text)
+    return compute_country_provinces(tag, state_owners, state_to_provs)
