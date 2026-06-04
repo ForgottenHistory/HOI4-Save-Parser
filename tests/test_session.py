@@ -216,6 +216,132 @@ class TestQueryPassthrough:
 
 
 # ---------------------------------------------------------------------------
+# Diplomacy queries
+# ---------------------------------------------------------------------------
+
+def _diplomacy_save(tag: str = "CAN") -> str:
+    """Synthetic save with a faction, a puppet, wargoals, and active wars.
+
+    The wargoals and the active wars deliberately don't match each other —
+    CAN has wargoals against GER (stale, no current war) but is actively
+    at war with ENG (no wargoal record because none was needed). This
+    mirrors what real KR saves do: wargoals persist after peace, and the
+    engine sometimes starts wars without a long-lived wargoal record.
+    """
+    # The country block has enough structure for find_country_block to accept it
+    # (focus_tree=), nothing else matters for the diplomacy queries — those
+    # scan the whole save text.
+    return (
+        'HOI4txt\nplayer="CAN"\n'
+        # CAN country block (just enough to be recognised)
+        '\n\tCAN={\n'
+        '\t\tfocus_tree="canada_focus"\n'
+        '\t\truling_party="social_liberal"\n'
+        '\t}\n'
+        # Faction
+        '\nfaction={\n'
+        '\tname="Entente"\n'
+        '\tideology=social_liberal\n'
+        '\tmembers={\n'
+        '\t\t"CAN"\n\t\t"AST"\n\t\t"NFL"\n'
+        '\t}\n'
+        '}\n'
+        # Puppet relation (CAN overlord of BAY)
+        'puppet={\n'
+        '\tautonomy_state="kr_occupied_puppet"\n'
+        '\tfirst="CAN"\n'
+        '\tsecond="BAY"\n'
+        '\tstart_date="1946.5.11.3"\n'
+        '}\n'
+        # Wargoals: stale (CAN-GER) — no active war for either
+        'wargoaldata_actor="CAN"\nwargoaldata_recipient="GER"\n'
+        # Active wars: CAN attacking ENG, RUS attacking CAN
+        'war_relation={\n'
+        '\tfirst="CAN"\n\tsecond="ENG"\n'
+        '\tstart_date="1946.1.2.3"\n'
+        '\tfirst_was_instigator=yes\n'
+        '\thostility_reason_instigator=war\n'
+        '\thostility_reason_defender=war\n'
+        '}\n'
+        'war_relation={\n'
+        '\tfirst="RUS"\n\tsecond="CAN"\n'
+        '\tstart_date="1946.2.4.5"\n'
+        '\tfirst_was_instigator=yes\n'
+        '\thostility_reason_instigator=war\n'
+        '\thostility_reason_defender=war\n'
+        '}\n'
+    )
+
+
+@pytest.fixture
+def diplomacy_session(session_save, hoi4_install, make_localizer):
+    """Session pointed at a save containing faction/puppet/war state."""
+    session_save.write_text(_diplomacy_save(), encoding="utf-8")
+    loc = make_localizer()  # empty locale is fine — diplomacy queries don't use it
+    loc.load_all_files()
+    s = HOI4Session(save_path=session_save, load_localizer=False)
+    s.localizer = loc
+    s.refresh()
+    return s
+
+
+class TestDiplomacyQueries:
+    def test_country_faction_returns_membership(self, diplomacy_session):
+        f = diplomacy_session.country_faction("CAN")
+        assert f["name"] == "Entente"
+        assert "CAN" in f["members"]
+        assert "AST" in f["members"]
+
+    def test_country_faction_returns_none_when_unaligned(self, diplomacy_session):
+        # GER isn't a member of the synthetic Entente.
+        assert diplomacy_session.country_faction("GER") is None
+
+    def test_country_subjects_lists_puppets(self, diplomacy_session):
+        subs = diplomacy_session.country_subjects("CAN")
+        assert len(subs) == 1
+        assert subs[0]["subject"] == "BAY"
+        assert subs[0]["autonomy_state"] == "kr_occupied_puppet"
+
+    def test_country_overlord_for_subject(self, diplomacy_session):
+        over = diplomacy_session.country_overlord("BAY")
+        assert over is not None
+        assert over["overlord"] == "CAN"
+
+    def test_country_overlord_none_for_sovereign(self, diplomacy_session):
+        assert diplomacy_session.country_overlord("CAN") is None
+
+    def test_country_wars_reflects_active_wars_only(self, diplomacy_session):
+        # CAN's only active wars are ENG (offensive) and RUS (defensive).
+        # The CAN→GER wargoal in the save is stale and must NOT appear
+        # under country_wars (that's the bug from the wargoals-only impl).
+        wars = diplomacy_session.country_wars("CAN")
+        assert wars == {"attacking": ["ENG"], "attacked_by": ["RUS"]}
+
+    def test_country_wars_attacker_side_only(self, diplomacy_session):
+        # ENG is in the save as the defender against CAN.
+        wars = diplomacy_session.country_wars("ENG")
+        assert wars == {"attacking": [], "attacked_by": ["CAN"]}
+
+    def test_country_wargoals_separate_from_wars(self, diplomacy_session):
+        # The stale CAN→GER wargoal IS visible through country_wargoals,
+        # which surfaces justifications (not active wars).
+        wg = diplomacy_session.country_wargoals("CAN")
+        assert wg == {"as_actor": ["GER"], "as_recipient": []}
+
+    def test_diplomacy_caches_are_save_wide(self, diplomacy_session):
+        # All save-wide caches are built once and reused.
+        a = diplomacy_session.factions
+        b = diplomacy_session.factions
+        assert a is b
+        c = diplomacy_session.puppet_relations
+        assert c is diplomacy_session.puppet_relations
+        d = diplomacy_session.wargoals
+        assert d is diplomacy_session.wargoals
+        e = diplomacy_session.wars
+        assert e is diplomacy_session.wars
+
+
+# ---------------------------------------------------------------------------
 # Localizer construction
 # ---------------------------------------------------------------------------
 

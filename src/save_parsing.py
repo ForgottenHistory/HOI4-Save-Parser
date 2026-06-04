@@ -287,3 +287,167 @@ def parse_country_ideas(save_text: str, tag: str) -> Optional[List[str]]:
     inner = body[block_start:block_end - 1]
     # Just split on whitespace; idea IDs are bare identifiers.
     return inner.split()
+
+
+# ---------------------------------------------------------------------------
+# Factions, puppet relations, wars
+# ---------------------------------------------------------------------------
+
+# Top-level faction blocks: ``\nfaction={ name=... members={...} ideology=... }``.
+_FACTION_BLOCK_RE = re.compile(r"\nfaction=\{")
+_FACTION_NAME_RE = re.compile(r'\bname\s*=\s*"([^"]+)"')
+_FACTION_IDEOLOGY_RE = re.compile(r"\bideology\s*=\s*(\w+)")
+_FACTION_MEMBERS_RE = re.compile(r"\bmembers\s*=\s*\{([^}]*)\}")
+_QUOTED_TAG_RE = re.compile(r'"([A-Z0-9]{3})"')
+
+# Puppet sub-blocks inside ``active_relations[TAG]``. We pull all the puppet
+# records from the whole save in one pass so a single regex serves both
+# "who does X overlord" and "who is X's overlord" queries.
+_PUPPET_REL_RE = re.compile(
+    r'puppet=\{\s*'
+    r'autonomy_state="(?P<autonomy>[^"]+)"\s*'
+    r'first="(?P<first>[A-Z0-9]{3})"\s*'
+    r'second="(?P<second>[A-Z0-9]{3})"\s*'
+    r'(?:start_date="(?P<start>[^"]+)"\s*)?'
+    r'\}'
+)
+
+# Wargoals carry ``wargoaldata_actor`` (attacker) and ``wargoaldata_recipient``
+# (target). HOI4 plaintext writes them on adjacent lines — actor first.
+# NOTE: these persist after wars conclude — they're the engine's record of
+# *justifications* the country has accumulated, not active wars. Use
+# ``parse_war_relations`` for currently-active wars instead.
+_WARGOAL_PAIR_RE = re.compile(
+    r'wargoaldata_actor="([A-Z0-9]{3})"\s*'
+    r'wargoaldata_recipient="([A-Z0-9]{3})"'
+)
+
+# Active wars: each ``war_relation={ first=X second=Y first_was_instigator=...
+# hostility_reason_instigator=war hostility_reason_defender=war ... }`` block
+# lives inside the instigator's ``diplomacy.active_relations[other]`` entry.
+# Each war between X and Y appears ONCE in the save — on the attacker's side.
+_WAR_RELATION_RE = re.compile(r"war_relation=\{")
+
+
+def parse_factions(save_text: str) -> List[Dict[str, object]]:
+    """Return all faction blocks in the save.
+
+    Shape: ``[{name, ideology, members: [TAG, ...]}, ...]``. The first member
+    is conventionally the faction leader in the launcher UI, but the save
+    doesn't mark it explicitly — callers wanting "leader" should treat
+    ``members[0]`` as a hint rather than truth.
+
+    The KR base game ships with ~12 faction templates; only the ones that
+    have at least one member at the current date appear here.
+    """
+    result: List[Dict[str, object]] = []
+    for hm in _FACTION_BLOCK_RE.finditer(save_text):
+        body_start = hm.end()
+        body_end = walk_block(save_text, body_start)
+        body = save_text[body_start:body_end - 1]
+        nm = _FACTION_NAME_RE.search(body)
+        im = _FACTION_IDEOLOGY_RE.search(body)
+        mm = _FACTION_MEMBERS_RE.search(body)
+        members = _QUOTED_TAG_RE.findall(mm.group(1)) if mm else []
+        result.append({
+            "name": nm.group(1) if nm else None,
+            "ideology": im.group(1) if im else None,
+            "members": members,
+        })
+    return result
+
+
+def parse_puppet_relations(save_text: str) -> List[Dict[str, object]]:
+    """Return every overlord/subject pair encoded in the save.
+
+    Shape: ``[{overlord: TAG, subject: TAG, autonomy_state, start_date}, ...]``.
+    Each record is the ``puppet={ first=X second=Y ... }`` block that
+    appears inside one country's ``active_relations[other]`` entry — the
+    same relation is mirrored on both sides, so we dedup by (first, second).
+
+    ``first`` in the save is the overlord, ``second`` is the subject.
+    """
+    seen = set()
+    out: List[Dict[str, object]] = []
+    for m in _PUPPET_REL_RE.finditer(save_text):
+        key = (m.group("first"), m.group("second"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "overlord": m.group("first"),
+            "subject": m.group("second"),
+            "autonomy_state": m.group("autonomy"),
+            "start_date": m.group("start"),
+        })
+    return out
+
+
+def parse_wargoal_pairs(save_text: str) -> List[Dict[str, str]]:
+    """Return every wargoal as ``{actor, recipient}`` — one record per goal.
+
+    A wargoal is the engine's record of "country A has a justification
+    against country B". These persist after wars conclude — a country
+    that fought and beat GER in 1944 still has the wargoal entry in
+    1946. For "currently at war" use ``parse_war_relations`` instead.
+
+    Multiple goals against the same target are returned as separate
+    records; callers wanting unique attacker→target pairs should dedup.
+    """
+    return [
+        {"actor": a, "recipient": r}
+        for a, r in _WARGOAL_PAIR_RE.findall(save_text)
+    ]
+
+
+def parse_war_relations(save_text: str) -> List[Dict[str, object]]:
+    """Return all currently-active wars in the save.
+
+    Shape: ``[{instigator, defender, start_date}, ...]``.
+
+    Each war is encoded as one ``war_relation={...}`` block sitting inside
+    the instigator's ``diplomacy.active_relations[defender]`` entry. The
+    relation has ``first`` (the instigator-side tag), ``second`` (the
+    defender-side tag), plus a ``first_was_instigator`` confirmation flag
+    and ``hostility_reason_*=war`` to distinguish from non-war hostilities
+    like border conflicts.
+
+    A war between X and Y appears in the save ONCE, on the attacker's side
+    — so to enumerate "wars involving WRA" callers must look at both
+    ``instigator==WRA`` and ``defender==WRA``.
+
+    When ``first_was_instigator=no`` (rare — happens e.g. when the engine
+    cleans up a war that started with a since-vanished aggressor), we
+    still report the block's ``first`` as instigator since that's what
+    HOI4's UI shows; callers caring about the distinction can read the
+    raw flag from ``first_was_instigator``.
+    """
+    out: List[Dict[str, object]] = []
+    for hm in _WAR_RELATION_RE.finditer(save_text):
+        body_start = hm.end()
+        body_end = walk_block(save_text, body_start)
+        body = save_text[body_start:body_end - 1]
+
+        first = re.search(r'first="([A-Z0-9]{3})"', body)
+        second = re.search(r'second="([A-Z0-9]{3})"', body)
+        if not (first and second):
+            continue
+
+        start = re.search(r'start_date="([^"]+)"', body)
+        inst_flag = re.search(r"first_was_instigator=(\w+)", body)
+        # Exclude non-war hostility (e.g. ``puppet`` or ``border_conflict``
+        # which use the same war_relation envelope). Only count entries
+        # where the defender-side reason is literally "war".
+        defender_reason = re.search(r"hostility_reason_defender=(\w+)", body)
+        if defender_reason and defender_reason.group(1) != "war":
+            continue
+
+        out.append({
+            "instigator": first.group(1),
+            "defender": second.group(1),
+            "start_date": start.group(1) if start else None,
+            "first_was_instigator": (
+                inst_flag.group(1) == "yes" if inst_flag else None
+            ),
+        })
+    return out

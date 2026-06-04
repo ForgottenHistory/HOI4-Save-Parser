@@ -44,6 +44,10 @@ from save_parsing import (
     get_player_tag,
     parse_character_names,
     parse_country_name_hints,
+    parse_factions,
+    parse_puppet_relations,
+    parse_war_relations,
+    parse_wargoal_pairs,
 )
 
 
@@ -82,6 +86,10 @@ class HOI4Session:
         self._save_text: Optional[str] = None
         self._characters: Optional[Dict[int, str]] = None
         self._hints: Optional[Dict[str, Dict[str, Optional[str]]]] = None
+        self._factions: Optional[List[Dict[str, object]]] = None
+        self._puppets: Optional[List[Dict[str, object]]] = None
+        self._wargoals: Optional[List[Dict[str, str]]] = None
+        self._wars: Optional[List[Dict[str, object]]] = None
 
         # Per-tag query caches (invalidated on each refresh).
         self._cache_focuses: Dict[str, dict] = {}
@@ -146,6 +154,10 @@ class HOI4Session:
         self._signature = signature
         self._characters = None
         self._hints = None
+        self._factions = None
+        self._puppets = None
+        self._wargoals = None
+        self._wars = None
         self._cache_focuses.clear()
         self._cache_parties.clear()
         self._cache_ideas.clear()
@@ -193,6 +205,39 @@ class HOI4Session:
     def game_date(self) -> Optional[Dict[str, object]]:
         """The current in-game date as {year, month, day, hour, raw}, or None."""
         return get_game_date(self.save_text)
+
+    @property
+    def factions(self) -> List[Dict[str, object]]:
+        """All active factions, parsed once per save."""
+        if self._factions is None:
+            self._factions = parse_factions(self.save_text)
+        return self._factions
+
+    @property
+    def puppet_relations(self) -> List[Dict[str, object]]:
+        """All overlord/subject pairs, parsed once per save."""
+        if self._puppets is None:
+            self._puppets = parse_puppet_relations(self.save_text)
+        return self._puppets
+
+    @property
+    def wargoals(self) -> List[Dict[str, str]]:
+        """All wargoal (actor, recipient) pairs, parsed once per save.
+
+        These are *justifications*, not active wars — they persist after
+        wars conclude. Use ``wars`` / ``country_wars`` for currently-
+        active wars.
+        """
+        if self._wargoals is None:
+            self._wargoals = parse_wargoal_pairs(self.save_text)
+        return self._wargoals
+
+    @property
+    def wars(self) -> List[Dict[str, object]]:
+        """All currently-active wars, parsed once per save."""
+        if self._wars is None:
+            self._wars = parse_war_relations(self.save_text)
+        return self._wars
 
     # ------------------------------------------------------------------
     # Per-country queries with per-tag caching
@@ -260,3 +305,66 @@ class HOI4Session:
                 self.save_text, tag, hoi4_path=self.hoi4_path,
             )
         return self._cache_provinces[tag]
+
+    # ------------------------------------------------------------------
+    # Diplomacy queries (filtered views over the save-wide caches)
+    # ------------------------------------------------------------------
+
+    def country_faction(self, tag: str) -> Optional[Dict[str, object]]:
+        """The faction this tag belongs to, or None."""
+        for f in self.factions:
+            if tag in f["members"]:
+                return f
+        return None
+
+    def country_subjects(self, tag: str) -> List[Dict[str, object]]:
+        """Tags this country overlords (puppets, dominions, etc.)."""
+        return [p for p in self.puppet_relations if p["overlord"] == tag]
+
+    def country_overlord(self, tag: str) -> Optional[Dict[str, object]]:
+        """The overlord relation for this tag, if it's a subject of someone."""
+        for p in self.puppet_relations:
+            if p["subject"] == tag:
+                return p
+        return None
+
+    def country_wars(self, tag: str) -> Dict[str, List[str]]:
+        """Wars this country is *currently* in, as ``{attacking, attacked_by}``.
+
+        Backed by ``war_relation`` records, which the engine clears when a
+        war ends — so a country that fought GER in 1944 but signed peace
+        in 1945 won't appear at war with GER in a 1946 save.
+
+        ``attacking`` lists tags this country instigated war against;
+        ``attacked_by`` lists tags that instigated war against this one.
+        Each opponent appears once per direction.
+        """
+        attacking, attacked_by = set(), set()
+        for w in self.wars:
+            if w["instigator"] == tag:
+                attacking.add(w["defender"])
+            if w["defender"] == tag:
+                attacked_by.add(w["instigator"])
+        return {
+            "attacking": sorted(attacking),
+            "attacked_by": sorted(attacked_by),
+        }
+
+    def country_wargoals(self, tag: str) -> Dict[str, List[str]]:
+        """All wargoal targets/attackers for this country (incl. stale ones).
+
+        Same shape as ``country_wars`` but backed by wargoals, which the
+        engine does NOT clean up. Useful as "countries this nation has
+        ever had justifications against" — e.g. for a stream overlay
+        showing diplomatic posture, but NOT for "who are we fighting".
+        """
+        as_actor, as_recipient = set(), set()
+        for w in self.wargoals:
+            if w["actor"] == tag:
+                as_actor.add(w["recipient"])
+            if w["recipient"] == tag:
+                as_recipient.add(w["actor"])
+        return {
+            "as_actor": sorted(as_actor),
+            "as_recipient": sorted(as_recipient),
+        }

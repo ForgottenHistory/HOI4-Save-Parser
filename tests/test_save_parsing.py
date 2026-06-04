@@ -7,6 +7,10 @@ from save_parsing import (
     get_game_date,
     get_player_tag,
     parse_country_name_hints,
+    parse_factions,
+    parse_puppet_relations,
+    parse_war_relations,
+    parse_wargoal_pairs,
     walk_block,
 )
 
@@ -200,3 +204,203 @@ class TestGetGameDate:
         )
         d = get_game_date(save)
         assert d["raw"] == "1946.5.28.24"
+
+
+# ---------------------------------------------------------------------------
+# parse_factions
+# ---------------------------------------------------------------------------
+
+def _faction_block(name: str, ideology: str, members: list[str]) -> str:
+    mem = "\n".join(f'\t\t"{m}"' for m in members)
+    return (
+        "\nfaction={\n"
+        f'\tname="{name}"\n'
+        f"\tideology={ideology}\n"
+        "\tmembers={\n"
+        f"{mem}\n"
+        "\t}\n"
+        "}\n"
+    )
+
+
+class TestParseFactions:
+    def test_extracts_basic_fields(self):
+        save = "header" + _faction_block("Entente", "national_populist", ["CAN", "AST"])
+        facts = parse_factions(save)
+        assert len(facts) == 1
+        assert facts[0]["name"] == "Entente"
+        assert facts[0]["ideology"] == "national_populist"
+        assert facts[0]["members"] == ["CAN", "AST"]
+
+    def test_multiple_factions(self):
+        save = (
+            "x"
+            + _faction_block("Entente", "national_populist", ["CAN"])
+            + _faction_block("Reichspakt", "authoritarian_democrat", ["GER", "BEL"])
+        )
+        facts = parse_factions(save)
+        names = [f["name"] for f in facts]
+        assert names == ["Entente", "Reichspakt"]
+
+    def test_empty_members_returns_empty_list(self):
+        save = (
+            "\nfaction={\n"
+            '\tname="Stub"\n'
+            "\tideology=collectivist\n"
+            "\tmembers={\n\t}\n"
+            "}\n"
+        )
+        facts = parse_factions(save)
+        assert facts[0]["members"] == []
+
+
+# ---------------------------------------------------------------------------
+# parse_puppet_relations
+# ---------------------------------------------------------------------------
+
+class TestParsePuppetRelations:
+    def test_extracts_overlord_and_subject(self):
+        save = (
+            'header\n'
+            'puppet={\n'
+            '\tautonomy_state="kr_occupied_puppet"\n'
+            '\tfirst="CAN"\n'
+            '\tsecond="BAY"\n'
+            '\tstart_date="1946.5.11.3"\n'
+            '}\n'
+        )
+        rels = parse_puppet_relations(save)
+        assert rels == [{
+            "overlord": "CAN",
+            "subject": "BAY",
+            "autonomy_state": "kr_occupied_puppet",
+            "start_date": "1946.5.11.3",
+        }]
+
+    def test_dedups_mirrored_relations(self):
+        # The same overlord/subject pair appears in both countries'
+        # active_relations blocks. We expect a single record.
+        block = (
+            'puppet={\n'
+            '\tautonomy_state="kr_initial_wif_puppet"\n'
+            '\tfirst="CAN"\n'
+            '\tsecond="CAF"\n'
+            '\tstart_date="1943.12.22.14"\n'
+            '}\n'
+        )
+        save = "x" + block + "more text" + block
+        rels = parse_puppet_relations(save)
+        assert len(rels) == 1
+
+    def test_missing_start_date_is_none(self):
+        save = (
+            'puppet={\n'
+            '\tautonomy_state="kr_dominion"\n'
+            '\tfirst="GBR"\n'
+            '\tsecond="IND"\n'
+            '}\n'
+        )
+        rels = parse_puppet_relations(save)
+        assert rels[0]["start_date"] is None
+
+
+# ---------------------------------------------------------------------------
+# parse_wargoal_pairs
+# ---------------------------------------------------------------------------
+
+class TestParseWargoalPairs:
+    def test_extracts_actor_recipient_pair(self):
+        save = (
+            'wargoals={\n'
+            '\tannex_everything={\n'
+            '\t\tid={ id=1 type=4713 }\n'
+            '\t\twargoaldata_actor="CAN"\n'
+            '\t\twargoaldata_recipient="GER"\n'
+            '\t\ttype=annex_everything\n'
+            '\t}\n'
+            '}\n'
+        )
+        assert parse_wargoal_pairs(save) == [{"actor": "CAN", "recipient": "GER"}]
+
+    def test_multiple_wargoals_preserved_in_order(self):
+        save = (
+            'wargoaldata_actor="CAN"\nwargoaldata_recipient="ENG"\n'
+            'wargoaldata_actor="RUS"\nwargoaldata_recipient="WRA"\n'
+            'wargoaldata_actor="CAN"\nwargoaldata_recipient="GER"\n'
+        )
+        pairs = parse_wargoal_pairs(save)
+        assert pairs == [
+            {"actor": "CAN", "recipient": "ENG"},
+            {"actor": "RUS", "recipient": "WRA"},
+            {"actor": "CAN", "recipient": "GER"},
+        ]
+
+    def test_returns_empty_when_no_wargoals(self):
+        assert parse_wargoal_pairs("HOI4txt\nplayer=\"CAN\"\n") == []
+
+
+# ---------------------------------------------------------------------------
+# parse_war_relations
+# ---------------------------------------------------------------------------
+
+def _war_relation_block(
+    first: str,
+    second: str,
+    *,
+    start: str = "1936.7.18.12",
+    instigator: str = "yes",
+    defender_reason: str = "war",
+) -> str:
+    return (
+        "war_relation={\n"
+        f'\tfirst="{first}"\n'
+        f'\tsecond="{second}"\n'
+        f'\tstart_date="{start}"\n'
+        f"\tfirst_was_instigator={instigator}\n"
+        f"\thostility_reason_instigator=war\n"
+        f"\thostility_reason_defender={defender_reason}\n"
+        "}\n"
+    )
+
+
+class TestParseWarRelations:
+    def test_extracts_instigator_and_defender(self):
+        save = "x" + _war_relation_block("RUS", "WRA", start="1936.7.18.12")
+        wars = parse_war_relations(save)
+        assert wars == [{
+            "instigator": "RUS",
+            "defender": "WRA",
+            "start_date": "1936.7.18.12",
+            "first_was_instigator": True,
+        }]
+
+    def test_skips_non_war_hostility(self):
+        # Puppet relationships sometimes use the same envelope but with
+        # hostility_reason_defender=puppet — those aren't wars.
+        save = (
+            "x"
+            + _war_relation_block("RUS", "WRA")
+            + _war_relation_block("ORE", "RUS", defender_reason="puppet")
+        )
+        wars = parse_war_relations(save)
+        assert len(wars) == 1
+        assert wars[0]["defender"] == "WRA"
+
+    def test_first_was_instigator_false_when_no(self):
+        save = "x" + _war_relation_block("FIN", "RUS", instigator="no")
+        wars = parse_war_relations(save)
+        assert wars[0]["first_was_instigator"] is False
+
+    def test_multiple_wars(self):
+        save = (
+            "x"
+            + _war_relation_block("RUS", "KAR", start="1936.5.1.24")
+            + _war_relation_block("RUS", "WRA", start="1936.7.18.12")
+            + _war_relation_block("FIN", "RUS", start="1936.5.2.24", instigator="no")
+        )
+        wars = parse_war_relations(save)
+        pairs = [(w["instigator"], w["defender"]) for w in wars]
+        assert pairs == [("RUS", "KAR"), ("RUS", "WRA"), ("FIN", "RUS")]
+
+    def test_returns_empty_when_no_wars(self):
+        assert parse_war_relations("HOI4txt\nplayer=\"CAN\"\n") == []
