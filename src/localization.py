@@ -380,15 +380,38 @@ class HOI4Localizer:
         value = re.sub(r"§.", "", value)
         return value.strip()
 
+    @staticmethod
+    def _format_multiline_display(value: str) -> str:
+        """Strip HOI4 color codes but preserve full multi-line content.
+
+        For tooltip-style display: KR's ``<TAG>_<party>_party_long`` keys
+        store both the native and the English translation, separated by a
+        literal ``\\n`` escape sequence and wrapped in ``§L ... §!`` color
+        codes. Unlike ``_clean_display_string`` we keep both lines —
+        callers wanting one line should use ``_clean_display_string``.
+
+        Converts literal ``\\n`` escapes to real newlines and strips
+        color codes.
+        """
+        if not value:
+            return value
+        value = value.replace("\\n", "\n")
+        value = re.sub(r"§.", "", value)
+        return value.strip()
+
     def get_party_names(self, tag: str, party_id: str) -> Dict[str, str]:
         """Return the localized name forms for a country's political party.
 
-        Returns ``{'short', 'long_raw', 'long_clean'}``:
+        Returns ``{'short', 'long_raw', 'long_clean', 'long_full'}``:
         - ``short``: abbreviation key ``<TAG>_<party_id>_party``
           (e.g. ``CAN_national_populist_party`` -> "IUP").
         - ``long_raw``: full key ``<TAG>_<party_id>_party_long``, unmodified.
         - ``long_clean``: long_raw with HOI4 formatting stripped and
           truncated at the first ``\\n`` for single-line display.
+        - ``long_full``: long_raw with color codes stripped and literal
+          ``\\n`` escapes converted to real newlines. Matches what HOI4
+          renders in party tooltips — for KR parties this is typically
+          a native-name line plus an English-translation line.
 
         Any missing key returns an empty string. Callers that want the
         raw key resolved through ``$var$`` references should use
@@ -406,4 +429,5 @@ class HOI4Localizer:
             "short": short,
             "long_raw": long_raw,
             "long_clean": self._clean_display_string(long_raw),
+            "long_full": self._format_multiline_display(long_raw),
         }

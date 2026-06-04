@@ -42,6 +42,7 @@ def get_country_parties(
             'short':          'SZR',
             'long_raw':       'Sovet ...\\n§LCouncil ...§!',
             'long_clean':     'Sovet ...',
+            'long_full':      'Sovet ...\nCouncil ...',
             'leaders': [
                 {'ideology': 'junta_subtype', 'character_id': 5511,
                  'name': 'Pavel Bermondt-Avalov'},
@@ -77,17 +78,20 @@ def get_country_parties(
                 if info["long_name_override"] else ""
             )
             long_clean = localizer._clean_display_string(long_raw)
+            long_full = localizer._format_multiline_display(long_raw)
             # Treat cleaned-key fallbacks as missing for these too.
             if info["name_override"] and info["name_override"] not in localizer.translations:
                 short = ""
             if info["long_name_override"] and info["long_name_override"] not in localizer.translations:
                 long_raw = ""
                 long_clean = ""
+                long_full = ""
         else:
             names = localizer.get_party_names(tag, party_id)
             short = names["short"]
             long_raw = names["long_raw"]
             long_clean = names["long_clean"]
+            long_full = names["long_full"]
 
         leaders = [
             {
@@ -106,6 +110,7 @@ def get_country_parties(
             "short": short,
             "long_raw": long_raw,
             "long_clean": long_clean,
+            "long_full": long_full,
             "leaders": leaders,
         })
 

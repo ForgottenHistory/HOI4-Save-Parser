@@ -247,6 +247,11 @@ class TestGetPartyNames:
         assert "§L" in names["long_raw"]
         # clean truncates at the first \n and strips §X codes.
         assert names["long_clean"] == "Sovet Zapadnoy Rossii"
+        # long_full keeps both lines (translation included) and strips color
+        # codes — this is what HOI4 renders in the in-game party tooltip.
+        assert names["long_full"] == (
+            "Sovet Zapadnoy Rossii\nCouncil of Western Russia"
+        )
 
     def test_missing_keys_become_empty_strings(self, make_localizer):
         # The localizer's get_localized_text would otherwise return a
@@ -254,7 +259,9 @@ class TestGetPartyNames:
         # that so the CLI can show "" cleanly.
         loc = make_localizer()
         names = loc.get_party_names("ZZZ", "totalist")
-        assert names == {"short": "", "long_raw": "", "long_clean": ""}
+        assert names == {
+            "short": "", "long_raw": "", "long_clean": "", "long_full": "",
+        }
 
 
 # ---------------------------------------------------------------------------
